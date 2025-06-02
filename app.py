@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template, send_file, flash
+from flask import Flask, request, render_template, jsonify, flash, send_from_directory # Import send_from_directory
 import os
 import pandas as pd
 import pdfplumber
@@ -9,16 +9,18 @@ import json
 import time
 import traceback
 import re
-from waitress import serve  # Import Waitress
+from waitress import serve
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = 'your_very_secret_random_key_here_GEMINI_PRODUCTION_READY'  # IMPORTANT: Change this!
+# IMPORTANT: Change this for production! Store it securely.
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "your_very_secret_random_key_here_GEMINI_PRODUCTION_READY")
+
 UPLOAD_FOLDER = 'uploads'
-OUTPUT_FOLDER = 'outputs'
+OUTPUT_FOLDER = 'outputs' # Still keep this for temp files
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
@@ -171,17 +173,24 @@ def analyze_text_chunk_with_gemini(text_chunk, page_num_or_chunk_id, filename_fo
     return [{"Error": f"Failed Gemini call for page '{page_num_or_chunk_id}' after {max_retries} attempts (exhausted retries)."}]
 
 
-@app.route('/', methods=['GET', 'POST'])
-def upload_file():
-    results = []  # Initialize results list
-    if request.method == 'POST':
+@app.route('/', methods=['GET'])
+def index():
+    """Renders the initial upload form page."""
+    return render_template('upload.html', results=[]) # Ensure results is always an empty list initially
+
+@app.route('/analyze', methods=['POST'])
+def analyze_document():
+    """Handles the file upload and analysis via AJAX, returns JSON results."""
+    results = [] # Initialize results list for this specific request
+    filepath = None # Initialize filepath to ensure it's defined for cleanup
+    excel_filename = None # Initialize excel_filename
+
+    try:
         if 'file' not in request.files:
-            flash("No file part selected.")
-            return render_template('upload.html', results=results)
+            return jsonify({"status": "error", "message": "No file part selected."}), 400
         file = request.files['file']
         if file.filename == '':
-            flash("No file selected.")
-            return render_template('upload.html', results=results)
+            return jsonify({"status": "error", "message": "No file selected."}), 400
 
         original_filename = file.filename
         filepath = os.path.join(UPLOAD_FOLDER, original_filename)
@@ -192,158 +201,221 @@ def upload_file():
         executor = ThreadPoolExecutor(max_workers=max_concurrent_llm_calls)
         futures = []
 
-        try:
-            if original_filename.lower().endswith('.pdf'):
-                with pdfplumber.open(filepath) as pdf:
-                    num_pages_to_process = len(pdf.pages)
+        if original_filename.lower().endswith('.pdf'):
+            with pdfplumber.open(filepath) as pdf:
+                num_pages_to_process = len(pdf.pages)
+                print(f"\n--- Starting concurrent processing of {num_pages_to_process} PDF pages ---")
+                for i in range(num_pages_to_process):
+                    page = pdf.pages[i]
+                    page_num_display = i + 1
+                    text = page.extract_text() if page.extract_text() else ""
 
-                    print(f"\n--- Starting concurrent processing of {num_pages_to_process} PDF pages ---")
-                    for i in range(num_pages_to_process):
-                        page = pdf.pages[i]
-                        page_num_display = i + 1
-                        text = page.extract_text() if page.extract_text() else ""
-
-                        if text.strip():
-                            futures.append(executor.submit(
-                                analyze_text_chunk_with_gemini,
-                                text,
-                                str(page_num_display),
-                                original_filename
-                            ))
-                            print(f"  [Submitted] Page {page_num_display} for LLM analysis.")
-                        else:
-                            print(f"  [Skipped] Page {page_num_display} (no text extracted).")
-                            all_extracted_data.append({
-                                "Product_Name": "N/A", # Corrected key
-                                "Allegation_Category": "N/A", # Corrected key
-                                "Specific_Allegation_Summary": f"No text extracted from PDF page {page_num_display}.", # Corrected key
-                                "Involved_Defendants_CoConspirators": "N/A", # Corrected key
-                                "Pin_Cite_Page": f"p. {page_num_display}", # Corrected key
-                                "Pin_Cite_Paragraph": "N/A" # Corrected key
-                            })
-
-            elif original_filename.lower().endswith('.docx'):
-                paras_per_chunk = 20  # Reduced for potentially larger text chunks
-                doc = Document(filepath)
-                all_paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-                total_paragraphs = len(all_paragraphs)
-
-                num_chunks_to_process = (total_paragraphs + paras_per_chunk - 1) // paras_per_chunk if total_paragraphs > 0 else 0
-
-                print(f"\n--- Starting concurrent processing of {num_chunks_to_process} DOCX chunks ---")
-                chunk_num_display = 1
-                for i in range(0, total_paragraphs, paras_per_chunk):
-                    chunk_paras = all_paragraphs[i: i + paras_per_chunk]
-                    text_chunk = "\n".join(chunk_paras)
-
-                    if text_chunk.strip():
-                        chunk_id_display = f"DOCX_Chunk_{chunk_num_display}"
+                    if text.strip():
                         futures.append(executor.submit(
                             analyze_text_chunk_with_gemini,
-                            text_chunk,
-                            chunk_id_display,
+                            text,
+                            str(page_num_display),
                             original_filename
                         ))
-                        print(f"  [Submitted] Chunk {chunk_id_display} for LLM analysis.")
+                        print(f"  [Submitted] Page {page_num_display} for LLM analysis.")
                     else:
-                        chunk_id_display = f"DOCX_Chunk_{chunk_num_display}"
-                        print(f"  [Skipped] Chunk {chunk_id_display} (no text extracted).")
+                        print(f"  [Skipped] Page {page_num_display} (no text extracted).")
                         all_extracted_data.append({
-                            "Product_Name": "N/A", # Corrected key
-                            "Allegation_Category": "N/A", # Corrected key
-                            "Specific_Allegation_Summary": f"No text extracted from DOCX chunk {chunk_id_display}.", # Corrected key
-                            "Involved_Defendants_CoConspirators": "N/A", # Corrected key
-                            "Pin_Cite_Page": chunk_id_display, # Corrected key
-                            "Pin_Cite_Paragraph": "N/A" # Corrected key
+                            "Product_Name": "N/A",
+                            "Allegation_Category": "N/A",
+                            "Specific_Allegation_Summary": f"No text extracted from PDF page {page_num_display}.",
+                            "Involved_Defendants_CoConspirators": "N/A",
+                            "Pin_Cite_Page": f"p. {page_num_display}",
+                            "Pin_Cite_Paragraph": "N/A"
                         })
-                    chunk_num_display += 1
 
-            else:
-                flash("Unsupported file type. Please upload a PDF or DOCX file.", "danger")
-                if os.path.exists(filepath):
-                    os.remove(filepath)
-                return render_template('upload.html', results=results)
+        elif original_filename.lower().endswith('.docx'):
+            paras_per_chunk = 20
+            doc = Document(filepath)
+            all_paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+            total_paragraphs = len(all_paragraphs)
+            num_chunks_to_process = (total_paragraphs + paras_per_chunk - 1) // paras_per_chunk if total_paragraphs > 0 else 0
 
-            # --- Collect Results from Futures ---
-            print("\n--- Collecting results from concurrent LLM calls ---")
-            total_submitted_tasks = len(futures)
-            for i, future in enumerate(as_completed(futures)):
-                try:
-                    extracted_allegations_list = future.result()
-                    for item in extracted_allegations_list:
-                        # Ensure keys from LLM output (e.g., "Product_Name") are mapped correctly for template
-                        # and that error items are also structured with the correct keys
-                        if "Error" in item:
-                            error_page_id = "N/A"
-                            if "for page '" in item.get("Error", ""):
-                                try:
-                                    error_page_id = item["Error"].split("for page '", 1)[1].split("'", 1)[0]
-                                except IndexError:
-                                    pass
+            print(f"\n--- Starting concurrent processing of {num_chunks_to_process} DOCX chunks ---")
+            chunk_num_display = 1
+            for i in range(0, total_paragraphs, paras_per_chunk):
+                chunk_paras = all_paragraphs[i: i + paras_per_chunk]
+                text_chunk = "\n".join(chunk_paras)
 
-                            all_extracted_data.append({
-                                "Product_Name": "ERROR",
-                                "Allegation_Category": item.get("Error", "Unknown LLM Error"),
-                                "Specific_Allegation_Summary": item.get("Content_Snippet", "")[:500] + f" ... (Full Error: {item.get('Error', 'N/A')})",
-                                "Involved_Defendants_CoConspirators": "N/A",
-                                "Pin_Cite_Page": f"P{error_page_id}", # Consistent key with template
-                                "Pin_Cite_Paragraph": "Error processing" # Consistent key with template
-                            })
-                        else:
-                            all_extracted_data.append({
-                                "Product_Name": item.get("Product_Name", "N/A"),
-                                "Allegation_Category": item.get("Allegation_Category", "N/A"),
-                                "Specific_Allegation_Summary": item.get("Specific_Allegation_Summary", "N/A"),
-                                "Involved_Defendants_CoConspirators": item.get(
-                                    "Involved_Defendants_CoConspirators", "N/A"),
-                                "Pin_Cite_Page": item.get("Pin_Cite_Page", "N/A"),
-                                "Pin_Cite_Paragraph": item.get("Pin_Cite_Paragraph", "N/A")
-                            })
-                    print(
-                        f"  [Collected] Task {i + 1}/{total_submitted_tasks} complete. Total allegations so far: {len(all_extracted_data)} entries.")
-                except Exception as e:
-                    print(f"  [Collection Critical Error] Error collecting future result {i + 1}/{total_submitted_tasks}: {e}")
-                    traceback.print_exc()
+                if text_chunk.strip():
+                    futures.append(executor.submit(
+                        analyze_text_chunk_with_gemini,
+                        text_chunk,
+                        chunk_id_display,
+                        original_filename
+                    ))
+                    print(f"  [Submitted] Chunk {chunk_id_display} for LLM analysis.")
+                else:
+                    chunk_id_display = f"DOCX_Chunk_{chunk_num_display}"
+                    print(f"  [Skipped] Chunk {chunk_id_display} (no text extracted).")
                     all_extracted_data.append({
-                        "Product_Name": "ERROR",
-                        "Allegation_Category": "Future Result Collection Error",
-                        "Specific_Allegation_Summary": str(e)[:500],
+                        "Product_Name": "N/A",
+                        "Allegation_Category": "N/A",
+                        "Specific_Allegation_Summary": f"No text extracted from DOCX chunk {chunk_id_display}.",
                         "Involved_Defendants_CoConspirators": "N/A",
-                        "Pin_Cite_Page": "N/A", # Consistent key with template
-                        "Pin_Cite_Paragraph": "N/A" # Consistent key with template
+                        "Pin_Cite_Page": chunk_id_display,
+                        "Pin_Cite_Paragraph": "N/A"
                     })
-            print(f"--- Finished collecting all {total_submitted_tasks} submitted results. ---")
+                chunk_num_display += 1
 
-            if not all_extracted_data:
-                flash("No specific allegations identified by the LLM or no processable text found.", "info")
-                # Ensure an empty or message-only item is sent if no data
-                results = [{"Product_Name": "No Data", "Allegation_Category": "N/A",
-                            "Specific_Allegation_Summary": "No specific allegations identified by the LLM or no processable text found.",
-                            "Involved_Defendants_CoConspirators": "N/A", "Pin_Cite_Page": "N/A",
-                            "Pin_Cite_Paragraph": "N/A"}]
-            else:
-                results = all_extracted_data
+        else:
+            return jsonify({"status": "error", "message": "Unsupported file type. Please upload a PDF or DOCX file."}), 400
 
-        except Exception as e:
-            print(f"\n--- ERROR in upload_file (main processing loop): {e} ---")
-            traceback.print_exc()
-            flash(f"Processing error: {str(e)}", "danger")
-            results = [] # Clear results on major error
-        finally:
-            if 'executor' in locals() and executor:
-                executor.shutdown(wait=True)
-                print("ThreadPoolExecutor shut down.")
+        # --- Collect Results from Futures ---
+        print("\n--- Collecting results from concurrent LLM calls ---")
+        total_submitted_tasks = len(futures)
+        for i, future in enumerate(as_completed(futures)):
+            try:
+                extracted_allegations_list = future.result()
+                for item in extracted_allegations_list:
+                    if "Error" in item:
+                        error_page_id = "N/A"
+                        if "for page '" in item.get("Error", ""):
+                            try:
+                                error_page_id = item["Error"].split("for page '", 1)[1].split("'", 1)[0]
+                            except IndexError:
+                                pass
 
-            if os.path.exists(filepath):
+                        all_extracted_data.append({
+                            "Product_Name": "ERROR",
+                            "Allegation_Category": item.get("Error", "Unknown LLM Error"),
+                            "Specific_Allegation_Summary": item.get("Content_Snippet", "")[:500] + f" ... (Full Error: {item.get('Error', 'N/A')})",
+                            "Involved_Defendants_CoConspirators": "N/A",
+                            "Pin_Cite_Page": f"P{error_page_id}",
+                            "Pin_Cite_Paragraph": "Error processing"
+                        })
+                    else:
+                        all_extracted_data.append({
+                            "Product_Name": item.get("Product_Name", "N/A"),
+                            "Allegation_Category": item.get("Allegation_Category", "N/A"),
+                            "Specific_Allegation_Summary": item.get("Specific_Allegation_Summary", "N/A"),
+                            "Involved_Defendants_CoConspirators": item.get(
+                                "Involved_Defendants_CoConspirators", "N/A"),
+                            "Pin_Cite_Page": item.get("Pin_Cite_Page", "N/A"),
+                            "Pin_Cite_Paragraph": item.get("Pin_Cite_Paragraph", "N/A")
+                        })
+                print(
+                    f"  [Collected] Task {i + 1}/{total_submitted_tasks} complete. Total allegations so far: {len(all_extracted_data)} entries.")
+            except Exception as e:
+                print(f"  [Collection Critical Error] Error collecting future result {i + 1}/{total_submitted_tasks}: {e}")
+                traceback.print_exc()
+                all_extracted_data.append({
+                    "Product_Name": "ERROR",
+                    "Allegation_Category": "Future Result Collection Error",
+                    "Specific_Allegation_Summary": str(e)[:500],
+                    "Involved_Defendants_CoConspirators": "N/A",
+                    "Pin_Cite_Page": "N/A",
+                    "Pin_Cite_Paragraph": "N/A"
+                })
+        print(f"--- Finished collecting all {total_submitted_tasks} submitted results. ---")
+
+        # --- Generate Excel Report ---
+        df = pd.DataFrame(all_extracted_data)
+
+        # Post-processing for desired Excel format (sorting and blanking product names)
+        if not df.empty and "Product_Name" in df.columns: # Use Product_Name as per LLM output
+            df_processed = df.copy()
+
+            def extract_page_num_for_sort(cite_str):
                 try:
-                    os.remove(filepath)
-                    print(f"Cleaned up uploaded file: {filepath}")
-                except Exception as e_remove:
-                    print(f"Error cleaning up {filepath}: {e_remove}")
-                    flash(f"Note: Could not remove temporary file {original_filename}. Manual cleanup may be needed.",
-                          "warning")
+                    if isinstance(cite_str, str) and cite_str.startswith("p. "):
+                        match = re.search(r"p\. (\d+),", cite_str)
+                        if match:
+                            return int(match.group(1))
+                except:
+                    pass
+                return float('inf')
 
-    return render_template('upload.html', results=results)
+            df_processed['sortable_page'] = df_processed['Pin_Cite_Page'].apply( # Use Pin_Cite_Page
+                extract_page_num_for_sort)
+
+            df_processed.sort_values(by=["Product_Name", 'sortable_page'], inplace=True, kind='mergesort', # Use Product_Name
+                                     na_position='last')
+            df_processed.drop('sortable_page', axis=1, inplace=True, errors='ignore')
+
+            df_processed['Product Name Display'] = df_processed['Product_Name'] # Use Product_Name
+            for i in range(1, len(df_processed)):
+                current_product = df_processed.iloc[i]['Product_Name'] # Use Product_Name
+                prev_product = df_processed.iloc[i - 1]['Product_Name'] # Use Product_Name
+                if current_product == prev_product and \
+                        current_product not in ["General Allegation", "ERROR", "N/A",
+                                                 "General Anticompetitive Conduct"]:
+                    df_processed.iloc[i, df_processed.columns.get_loc('Product Name Display')] = ""
+
+            final_columns_ordered = ["Product Name Display", "Allegation_Category", "Specific_Allegation_Summary", # Use correct keys
+                                    "Involved_Defendants_CoConspirators",
+                                    "Pin_Cite_Page", "Pin_Cite_Paragraph"] # Use correct keys
+
+            cols_to_use = [col for col in final_columns_ordered if col in df_processed.columns]
+            df_excel = df_processed[cols_to_use].rename(columns={"Product Name Display": "Product Name"})
+        elif df.empty:
+            df_excel = pd.DataFrame(columns=["Product Name", "Allegation_Category", "Specific_Allegation_Summary",
+                                             "Involved_Defendants_CoConspirators",
+                                             "Pin_Cite_Page", "Pin_Cite_Paragraph"])
+        else:
+            df_excel = df.rename(columns={"Product_Name": "Product Name", # Ensure consistent output for template/excel
+                                            "Allegation_Category": "Allegation Category",
+                                            "Specific_Allegation_Summary": "Specific Allegation Summary",
+                                            "Involved_Defendants_CoConspirators": "Involved Defendants/Co-Conspirators (as per the allegation)",
+                                            "Pin_Cite_Page": "Pin Cite (Page #)", # Adjust as needed for Excel
+                                            "Pin_Cite_Paragraph": "Pin Cite (Paragraph #)" # Adjust as needed for Excel
+                                            })
+
+        # Construct the Excel filename and save it
+        file_name_without_extension = os.path.splitext(original_filename)[0]
+        excel_filename = f"{file_name_without_extension}-analysis.xlsx"
+        excel_filepath = os.path.join(OUTPUT_FOLDER, excel_filename)
+        df_excel.to_excel(excel_filepath, index=False)
+        print(f"\n--- Excel file generated: {excel_filepath} ---")
+
+        # Prepare results for JSON response
+        results_for_json = all_extracted_data
+        if not results_for_json:
+            results_for_json = [{"Product_Name": "No Data", "Allegation_Category": "N/A",
+                                "Specific_Allegation_Summary": "No specific allegations identified by the LLM or no processable text found.",
+                                "Involved_Defendants_CoConspirators": "N/A", "Pin_Cite_Page": "N/A",
+                                "Pin_Cite_Paragraph": "N/A"}]
+
+        return jsonify({"status": "success", "results": results_for_json, "excel_filename": excel_filename}), 200
+
+    except Exception as e:
+        print(f"\n--- ERROR in analyze_document (main processing loop): {e} ---")
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": f"Processing error: {str(e)}"}), 500
+    finally:
+        if 'executor' in locals() and executor:
+            executor.shutdown(wait=True)
+            print("ThreadPoolExecutor shut down.")
+
+        if filepath and os.path.exists(filepath):
+            try:
+                os.remove(filepath)
+                print(f"Cleaned up uploaded file: {filepath}")
+            except Exception as e_remove:
+                print(f"Error cleaning up {filepath}: {e_remove}")
+
+
+@app.route('/download_report/<filename>')
+def download_report(filename):
+    """Serves the generated Excel report for download."""
+    try:
+        # Ensure the filename is safe to prevent directory traversal attacks
+        # Flask's send_from_directory handles this automatically, but it's good to be aware.
+        print(f"Attempting to serve file: {filename} from {OUTPUT_FOLDER}")
+        return send_from_directory(OUTPUT_FOLDER, filename, as_attachment=True)
+    except FileNotFoundError:
+        print(f"File not found: {filename} in {OUTPUT_FOLDER}")
+        return "File not found.", 404
+    except Exception as e:
+        print(f"Error serving file {filename}: {e}")
+        traceback.print_exc()
+        return "Error serving file.", 500
+
 
 if __name__ == '__main__':
     if not gemini_model_global:
@@ -352,9 +424,9 @@ if __name__ == '__main__':
     else:
         try:
             # For production deployment, use waitress:
-            serve(app, host='0.0.0.0', port=5000, threads=10)  # Adjust threads as needed
+            serve(app, host='0.0.0.0', port=5000, threads=10)
             # For development with Flask's built-in server (debug=True, use_reloader=False)
             # app.run(debug=True, use_reloader=False)
         except Exception as e:
             print(f"Error starting the Flask application: {e}")
-            traceback.print_exc() # This will print the full error stack to your console
+            traceback.print_exc()

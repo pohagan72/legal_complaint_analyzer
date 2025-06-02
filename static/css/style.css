@@ -1,147 +1,392 @@
 /* General Styles */
 body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; /* Closest to the Epiq font */
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     background-color: #f7f9fc; /* Light gray background */
     margin: 0;
     padding: 0;
     color: #343a40; /* Dark gray text */
+    line-height: 1.6;
 }
 
 .container {
-    width: 80%;
-    max-width: 1200px;  /* Limit container width */
+    width: 90%;
+    max-width: 1000px;
     margin: 20px auto;
     padding: 20px;
 }
 
 /* Header */
 header {
-    background-color: #fff;
-    padding: 20px;
+    background-color: #ffffff;
+    padding: 25px;
     text-align: center;
-    border-bottom: 1px solid #dee2e6;  /* Light border */
-    margin-bottom: 20px;
+    border-bottom: 1px solid #e0e6ed;
+    margin-bottom: 25px;
+    border-radius: 8px; /* Slightly rounded for softness */
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.05); /* Enhanced shadow */
 }
 
 h1 {
     color: #007bff; /* Primary blue */
-    font-size: 2.5em;
-    margin-bottom: 5px;
+    font-size: 2.8em; /* Slightly larger heading */
+    margin-bottom: 8px;
+    font-weight: 600; /* Bolder */
 }
 
 header p {
-    color: #6c757d; /* Secondary text color */
+    color: #6c757d;
+    font-size: 1.1em;
 }
 
-/* Analyzer Tool */
+/* Analyzer Tool Card */
 .analyzer-tool {
     display: flex;
-    justify-content: center; /* Center the tool card */
+    justify-content: center;
+    padding-bottom: 40px; /* Space from footer */
 }
 
 .tool-card {
-    background-color: #fff;
+    background-color: #ffffff;
     border-radius: 10px;
-    padding: 30px;
-    width: 100%; /* Take up the container width */
-    max-width: 800px; /* Limit tool card width */
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05); /* Subtle shadow */
+    padding: 40px; /* More padding */
+    width: 100%;
+    max-width: 800px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08); /* More prominent, soft shadow */
+    transition: transform 0.2s ease-in-out; /* Subtle hover effect */
 }
+
+/* .tool-card:hover {
+    transform: translateY(-3px); /* Lift slightly on hover */
+} */
 
 .tool-card h2 {
     color: #007bff;
-    margin-bottom: 15px;
+    margin-bottom: 20px;
+    font-size: 2em;
+    border-bottom: 2px solid #e0e6ed; /* Subtle separator */
+    padding-bottom: 10px;
 }
 
 .tool-card p {
     color: #495057;
-    line-height: 1.6;
+    margin-bottom: 15px;
 }
 
 /* Form Styling */
 .upload-form {
-    display: flex;
-    flex-direction: column;
-    margin-top: 20px;
+    margin-top: 30px;
 }
 
 .form-group {
-    margin-bottom: 15px;
+    margin-bottom: 25px; /* More space between groups */
 }
 
 .form-group label {
     display: block;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
     color: #555;
-    font-weight: bold; /* Make labels bolder */
+    font-weight: bold;
+    font-size: 1.1em;
 }
 
 .form-group input[type="file"],
 .form-group input[type="number"] {
-    padding: 12px;
-    border: 1px solid #ced4da; /* Light border */
+    padding: 12px 15px; /* More padding */
+    border: 1px solid #ced4da;
     border-radius: 5px;
-    margin-top: 5px;
-    font-size: 16px;  /* Increase font size for better readability */
+    width: 100%;
+    box-sizing: border-box;
+    font-size: 1em;
+    transition: border-color 0.3s ease;
 }
 
+.form-group input[type="file"]:focus,
+.form-group input[type="number"]:focus {
+    border-color: #007bff; /* Highlight on focus */
+    outline: none;
+    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25); /* Subtle blue glow */
+}
+
+/* Custom file input appearance (optional, depends on browser support) */
+.form-group input[type="file"]::-webkit-file-upload-button {
+    background-color: #007bff;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    margin-right: 15px;
+    transition: background-color 0.3s ease;
+}
+
+.form-group input[type="file"]::-webkit-file-upload-button:hover {
+    background-color: #0056b3;
+}
+
+
 .analyze-button {
-    padding: 14px 28px;
+    padding: 15px 30px;
     background-color: #007bff;
     color: #fff;
     border: none;
     border-radius: 7px;
     cursor: pointer;
-    font-size: 16px;  /* Increase font size */
-    transition: background-color 0.3s ease;
-    margin-top: 20px; /* Add margin above button */
+    font-size: 1.2em; /* Larger button text */
+    font-weight: 600;
+    transition: background-color 0.3s ease, transform 0.2s ease;
+    margin-top: 20px;
+    width: auto; /* Allow button to size to content */
+    display: block; /* Make it a block element to center if needed */
+    margin-left: auto;
+    margin-right: auto;
 }
 
 .analyze-button:hover {
     background-color: #0056b3;
+    transform: translateY(-2px); /* Slight lift on hover */
+}
+
+.analyze-button:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
+    transform: none; /* No lift when disabled */
 }
 
 /* Results Styling */
 .results-container {
-    margin-top: 30px;
-    padding: 20px;
-    border: 1px solid #ced4da;
-    border-radius: 7px;
-    background-color: #f8f9fa;
+    margin-top: 40px; /* More space above results */
+    padding: 25px;
+    border: 1px solid #e0e6ed;
+    border-radius: 8px;
+    background-color: #f8f9fa; /* Lighter background for results section */
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05); /* Inner shadow for depth */
 }
+
+.results-container h3 {
+    color: #007bff;
+    border-bottom: 2px solid #e0e6ed;
+    padding-bottom: 10px;
+    margin-bottom: 20px;
+    font-size: 1.8em;
+}
+
+.product-group-card {
+    background-color: #ffffff;
+    border: 1px solid #e0e6ed;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    padding: 15px 20px; /* Reduced padding for header, content has its own */
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    cursor: pointer; /* Indicates it's clickable */
+    transition: background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.product-group-card:hover {
+    background-color: #f0f8ff; /* Light blue on hover */
+    border-color: #007bff;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); /* Slightly more prominent shadow on hover */
+}
+
+.product-group-card h4 {
+    color: #343a40;
+    font-size: 1.4em;
+    margin: 0; /* Remove default margin */
+    display: flex; /* Enable flexbox for icon alignment */
+    justify-content: space-between; /* Space out title and icon */
+    align-items: center; /* Vertically align */
+}
+
+.product-group-card .toggle-icon {
+    transition: transform 0.3s ease;
+}
+
+.product-group-card.expanded .toggle-icon {
+    transform: rotate(180deg); /* Rotate arrow when expanded */
+}
+
+.product-group-card .group-content {
+    max-height: 0; /* Hidden by default */
+    overflow: hidden;
+    transition: max-height 0.5s ease-out, padding 0.5s ease-out, opacity 0.3s ease-out; /* Smooth collapse/expand */
+    padding-top: 0;
+    padding-bottom: 0;
+    opacity: 0;
+    visibility: hidden; /* Hide content from screen readers when collapsed */
+}
+
+.product-group-card .group-content.hidden {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    opacity: 0;
+    visibility: hidden;
+}
+
+.product-group-card .group-content:not(.hidden) {
+    max-height: 1000px; /* A large enough value to accommodate content when expanded */
+    padding-top: 20px; /* Padding when expanded */
+    padding-bottom: 5px;
+    opacity: 1;
+    visibility: visible;
+}
+
 
 .result-item {
     margin-bottom: 15px;
     padding: 15px;
-    border: 1px solid #ddd;
+    border: 1px dashed #e0e6ed; /* Dashed border for sub-items */
     border-radius: 5px;
-    background-color: #fff;
+    background-color: #fcfdff; /* Very light background for individual items */
+}
+
+.result-item:last-child {
+    margin-bottom: 0; /* No margin after the last item in a group */
 }
 
 .result-item p {
     margin: 5px 0;
+    font-size: 0.95em;
+    color: #555;
 }
 
-/* Flashes Styling */
+.result-item strong {
+    color: #007bff; /* Highlight labels */
+}
+
+
+/* Flashes Styling (Client-Side) */
 .flashes {
     list-style: none;
-    padding: 10px;
-    margin: 10px 0;
-    background-color: #f8d7da;
-    border: 1px solid #f5c6cb;
-    color: #721c24;
-    border-radius: 5px;
+    padding: 15px;
+    margin: 15px 0;
+    border-radius: 8px;
+    font-size: 1.1em;
+    font-weight: 500;
+    animation: fadeIn 0.5s ease-out; /* Fade in effect */
 }
 
 .flashes li {
-    margin-bottom: 5px;
+    margin-bottom: 0; /* No space between list items, as there's usually only one flash message */
+}
+
+.flashes.danger {
+    background-color: #f8d7da;
+    border: 1px solid #f5c6cb;
+    color: #721c24;
+}
+
+.flashes.info {
+    background-color: #d1ecf1;
+    border: 1px solid #bee5eb;
+    color: #0c5460;
+}
+
+.flashes.success {
+    background-color: #d4edda;
+    border: 1px solid #c3e6cb;
+    color: #155724;
+}
+
+.flashes.warning {
+    background-color: #fff3cd;
+    border: 1px solid #ffeeba;
+    color: #856404;
+}
+
+
+/* Loading Overlay */
+#loadingOverlay {
+    position: fixed; /* Fixed position to cover the whole screen */
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(255, 255, 255, 0.9); /* Semi-transparent white overlay */
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000; /* Ensure it's on top of other content */
+    color: #007bff;
+    font-size: 1.5em;
+    font-weight: bold;
+    display: none; /* Hidden by default */
+}
+
+.spinner {
+    border: 8px solid #f3f3f3; /* Light grey */
+    border-top: 8px solid #007bff; /* Blue */
+    border-radius: 50%;
+    width: 60px;
+    height: 60px;
+    animation: spin 1.5s linear infinite; /* Spin animation */
+    margin-bottom: 20px;
+}
+
+.sub-text {
+    font-size: 0.8em;
+    color: #6c757d;
+    margin-top: 10px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 
 /* Footer */
 footer {
     text-align: center;
     margin-top: 40px;
-    padding: 20px;
+    padding: 25px;
     color: #6c757d;
-    border-top: 1px solid #dee2e6;
+    border-top: 1px solid #e0e6ed;
+    background-color: #ffffff;
+    border-radius: 8px;
+    box-shadow: 0 -3px 10px rgba(0, 0, 0, 0.03);
+    font-size: 0.9em;
+}
+
+/* New: Download Button Styling */
+.download-section {
+    text-align: center;
+    margin-top: 30px;
+    padding-top: 20px;
+    border-top: 1px dashed #e0e6ed; /* Separator for clarity */
+}
+
+.download-button {
+    display: inline-flex; /* Use flexbox for icon and text alignment */
+    align-items: center;
+    gap: 10px; /* Space between icon and text */
+    padding: 15px 30px;
+    background-color: #28a745; /* Green for download */
+    color: #fff;
+    text-decoration: none;
+    border-radius: 7px;
+    font-size: 1.1em;
+    font-weight: 600;
+    transition: background-color 0.3s ease, transform 0.2s ease;
+    box-shadow: 0 4px 10px rgba(40, 167, 69, 0.2); /* Green shadow */
+}
+
+.download-button:hover {
+    background-color: #218838; /* Darker green on hover */
+    transform: translateY(-2px);
+    box-shadow: 0 6px 15px rgba(40, 167, 69, 0.3);
+}
+
+.download-button i {
+    font-size: 1.2em; /* Size of the icon */
+}
+
+.download-tip {
+    color: #6c757d;
+    font-size: 0.9em;
+    margin-top: 10px;
 }

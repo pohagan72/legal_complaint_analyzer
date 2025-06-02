@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Legal Complaint Analyzer</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
 </head>
 <body>
     <div class="container">
@@ -18,17 +20,9 @@
                 <h2>Analyze Document</h2>
                 <p>Upload a legal complaint document to identify potential anticompetitive allegations.</p>
 
-                {% with messages = get_flashed_messages() %}
-                    {% if messages %}
-                        <ul class="flashes">
-                            {% for message in messages %}
-                                <li>{{ message }}</li>
-                            {% endfor %}
-                        </ul>
-                    {% endif %}
-                {% endwith %}
+                <ul id="flashesContainer" class="flashes" style="display:none;"></ul>
 
-                <form method="post" enctype="multipart/form-data" class="upload-form">
+                <form id="analyzeForm" class="upload-form">
                     <div class="form-group">
                         <label for="file">Choose file:</label>
                         <input type="file" name="file" id="file" required>
@@ -36,20 +30,9 @@
                     <button type="submit" class="analyze-button">Analyze</button>
                 </form>
 
-                {% if results %}
-                    <div class="results-container">
-                        <h3>Analysis Results:</h3>
-                        {% for result in results %}
-                            <div class="result-item">
-                                <p><strong>Product:</strong> {{ result.Product_Name }}</p>
-                                <p><strong>Allegation:</strong> {{ result.Allegation_Category }}</p>
-                                <p><strong>Summary:</strong> {{ result.Specific_Allegation_Summary }}</p>
-                                <p><strong>Defendants:</strong> {{ result.Involved_Defendants_CoConspirators }}</p>
-                                <p><strong>Cite:</strong> {{ result.Pin_Cite_Page }}</p>
-                            </div>
-                        {% endfor %}
-                    </div>
-                {% endif %}
+                <div id="resultsContainer" class="results-container" style="display:none;">
+                    <!-- Results will be dynamically loaded here by JavaScript -->
+                </div>
             </div>
         </section>
 
@@ -57,5 +40,14 @@
             <p>© 2024 Epiq. All rights reserved.</p>
         </footer>
     </div>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay">
+        <div class="spinner"></div>
+        <p>Analyzing document...</p>
+        <p class="sub-text">This may take a moment depending on document size.</p>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 </body>
 </html>
