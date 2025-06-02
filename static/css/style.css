@@ -1,0 +1,147 @@
+/* General Styles */
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; /* Closest to the Epiq font */
+    background-color: #f7f9fc; /* Light gray background */
+    margin: 0;
+    padding: 0;
+    color: #343a40; /* Dark gray text */
+}
+
+.container {
+    width: 80%;
+    max-width: 1200px;  /* Limit container width */
+    margin: 20px auto;
+    padding: 20px;
+}
+
+/* Header */
+header {
+    background-color: #fff;
+    padding: 20px;
+    text-align: center;
+    border-bottom: 1px solid #dee2e6;  /* Light border */
+    margin-bottom: 20px;
+}
+
+h1 {
+    color: #007bff; /* Primary blue */
+    font-size: 2.5em;
+    margin-bottom: 5px;
+}
+
+header p {
+    color: #6c757d; /* Secondary text color */
+}
+
+/* Analyzer Tool */
+.analyzer-tool {
+    display: flex;
+    justify-content: center; /* Center the tool card */
+}
+
+.tool-card {
+    background-color: #fff;
+    border-radius: 10px;
+    padding: 30px;
+    width: 100%; /* Take up the container width */
+    max-width: 800px; /* Limit tool card width */
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05); /* Subtle shadow */
+}
+
+.tool-card h2 {
+    color: #007bff;
+    margin-bottom: 15px;
+}
+
+.tool-card p {
+    color: #495057;
+    line-height: 1.6;
+}
+
+/* Form Styling */
+.upload-form {
+    display: flex;
+    flex-direction: column;
+    margin-top: 20px;
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    color: #555;
+    font-weight: bold; /* Make labels bolder */
+}
+
+.form-group input[type="file"],
+.form-group input[type="number"] {
+    padding: 12px;
+    border: 1px solid #ced4da; /* Light border */
+    border-radius: 5px;
+    margin-top: 5px;
+    font-size: 16px;  /* Increase font size for better readability */
+}
+
+.analyze-button {
+    padding: 14px 28px;
+    background-color: #007bff;
+    color: #fff;
+    border: none;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 16px;  /* Increase font size */
+    transition: background-color 0.3s ease;
+    margin-top: 20px; /* Add margin above button */
+}
+
+.analyze-button:hover {
+    background-color: #0056b3;
+}
+
+/* Results Styling */
+.results-container {
+    margin-top: 30px;
+    padding: 20px;
+    border: 1px solid #ced4da;
+    border-radius: 7px;
+    background-color: #f8f9fa;
+}
+
+.result-item {
+    margin-bottom: 15px;
+    padding: 15px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    background-color: #fff;
+}
+
+.result-item p {
+    margin: 5px 0;
+}
+
+/* Flashes Styling */
+.flashes {
+    list-style: none;
+    padding: 10px;
+    margin: 10px 0;
+    background-color: #f8d7da;
+    border: 1px solid #f5c6cb;
+    color: #721c24;
+    border-radius: 5px;
+}
+
+.flashes li {
+    margin-bottom: 5px;
+}
+
+/* Footer */
+footer {
+    text-align: center;
+    margin-top: 40px;
+    padding: 20px;
+    color: #6c757d;
+    border-top: 1px solid #dee2e6;
+}

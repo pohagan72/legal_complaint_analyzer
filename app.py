@@ -40,6 +40,10 @@ else:
 
 
 def analyze_text_chunk_with_gemini(text_chunk, page_num_or_chunk_id, filename_for_context):
+    """
+    Analyzes a given text chunk using the Google Gemini model to extract legal allegations.
+    Returns a list of dictionaries, each representing an allegation.
+    """
     if not gemini_model_global:
         return [{"Error": "Google Gemini client not initialized."}]
 
@@ -169,25 +173,15 @@ def analyze_text_chunk_with_gemini(text_chunk, page_num_or_chunk_id, filename_fo
 
 @app.route('/', methods=['GET', 'POST'])
 def upload_file():
+    results = []  # Initialize results list
     if request.method == 'POST':
         if 'file' not in request.files:
             flash("No file part selected.")
-            return render_template('upload.html')
+            return render_template('upload.html', results=results)
         file = request.files['file']
         if file.filename == '':
             flash("No file selected.")
-            return render_template('upload.html')
-
-        page_limit = None
-        page_limit_str = request.form.get('page_limit', '')
-        if page_limit_str.isdigit():
-            limit_val = int(page_limit_str)
-            if limit_val > 0:
-                page_limit = limit_val
-            else:
-                flash("Page/Chunk limit must be positive. Processing all pages/chunks.")
-        elif page_limit_str:
-            flash("Invalid page/chunk limit. Processing all pages/chunks.")
+            return render_template('upload.html', results=results)
 
         original_filename = file.filename
         filepath = os.path.join(UPLOAD_FOLDER, original_filename)
@@ -202,9 +196,6 @@ def upload_file():
             if original_filename.lower().endswith('.pdf'):
                 with pdfplumber.open(filepath) as pdf:
                     num_pages_to_process = len(pdf.pages)
-                    if page_limit is not None and page_limit < num_pages_to_process:
-                        num_pages_to_process = page_limit
-                        flash(f"Processing only the first {page_limit} PDF pages as requested.")
 
                     print(f"\n--- Starting concurrent processing of {num_pages_to_process} PDF pages ---")
                     for i in range(num_pages_to_process):
@@ -223,11 +214,12 @@ def upload_file():
                         else:
                             print(f"  [Skipped] Page {page_num_display} (no text extracted).")
                             all_extracted_data.append({
-                                "Product Name": "N/A", "Allegation Category": "N/A",
-                                "Specific Allegation Summary": f"No text extracted from PDF page {page_num_display}.",
-                                "Involved Defendants/Co-Conspirators (as per the allegation)": "N/A",
-                                "Source Complaint": "Walmart Complaint, 2:25-cv-01383, Doc. 1",  # Fixed string
-                                "Pin Cite (Page #, Paragraph #)": f"p. {page_num_display}, N/A"
+                                "Product_Name": "N/A", # Corrected key
+                                "Allegation_Category": "N/A", # Corrected key
+                                "Specific_Allegation_Summary": f"No text extracted from PDF page {page_num_display}.", # Corrected key
+                                "Involved_Defendants_CoConspirators": "N/A", # Corrected key
+                                "Pin_Cite_Page": f"p. {page_num_display}", # Corrected key
+                                "Pin_Cite_Paragraph": "N/A" # Corrected key
                             })
 
             elif original_filename.lower().endswith('.docx'):
@@ -237,16 +229,10 @@ def upload_file():
                 total_paragraphs = len(all_paragraphs)
 
                 num_chunks_to_process = (total_paragraphs + paras_per_chunk - 1) // paras_per_chunk if total_paragraphs > 0 else 0
-                if page_limit is not None and page_limit < num_chunks_to_process:
-                    num_chunks_to_process = page_limit
-                    flash(f"Processing only the first {page_limit} DOCX chunks as requested.")
 
                 print(f"\n--- Starting concurrent processing of {num_chunks_to_process} DOCX chunks ---")
                 chunk_num_display = 1
                 for i in range(0, total_paragraphs, paras_per_chunk):
-                    if chunk_num_display > num_chunks_to_process:
-                        break
-
                     chunk_paras = all_paragraphs[i: i + paras_per_chunk]
                     text_chunk = "\n".join(chunk_paras)
 
@@ -263,11 +249,12 @@ def upload_file():
                         chunk_id_display = f"DOCX_Chunk_{chunk_num_display}"
                         print(f"  [Skipped] Chunk {chunk_id_display} (no text extracted).")
                         all_extracted_data.append({
-                            "Product Name": "N/A", "Allegation Category": "N/A",
-                            "Specific Allegation Summary": f"No text extracted from DOCX chunk {chunk_id_display}.",
-                            "Involved Defendants/Co-Conspirators (as per the allegation)": "N/A",
-                            "Source Complaint": "Walmart Complaint, 2:25-cv-01383, Doc. 1",
-                            "Pin Cite (Page #, Paragraph #)": f"{chunk_id_display}, N/A"
+                            "Product_Name": "N/A", # Corrected key
+                            "Allegation_Category": "N/A", # Corrected key
+                            "Specific_Allegation_Summary": f"No text extracted from DOCX chunk {chunk_id_display}.", # Corrected key
+                            "Involved_Defendants_CoConspirators": "N/A", # Corrected key
+                            "Pin_Cite_Page": chunk_id_display, # Corrected key
+                            "Pin_Cite_Paragraph": "N/A" # Corrected key
                         })
                     chunk_num_display += 1
 
@@ -275,7 +262,7 @@ def upload_file():
                 flash("Unsupported file type. Please upload a PDF or DOCX file.", "danger")
                 if os.path.exists(filepath):
                     os.remove(filepath)
-                return render_template('upload.html')
+                return render_template('upload.html', results=results)
 
             # --- Collect Results from Futures ---
             print("\n--- Collecting results from concurrent LLM calls ---")
@@ -284,6 +271,8 @@ def upload_file():
                 try:
                     extracted_allegations_list = future.result()
                     for item in extracted_allegations_list:
+                        # Ensure keys from LLM output (e.g., "Product_Name") are mapped correctly for template
+                        # and that error items are also structured with the correct keys
                         if "Error" in item:
                             error_page_id = "N/A"
                             if "for page '" in item.get("Error", ""):
@@ -293,22 +282,22 @@ def upload_file():
                                     pass
 
                             all_extracted_data.append({
-                                "Product Name": "ERROR",
-                                "Allegation Category": item.get("Error", "Unknown LLM Error"),
-                                "Specific Allegation Summary": item.get("Content_Snippet", "")[:500] + f" ... (Full Error: {item.get('Error', 'N/A')})",  # Append full error message
-                                "Involved Defendants/Co-Conspirators (as per the allegation)": "N/A",
-                                "Source Complaint": "Walmart Complaint, 2:25-cv-01383, Doc. 1",
-                                "Pin Cite (Page #, Paragraph #)": f"P{error_page_id}, Error processing"
+                                "Product_Name": "ERROR",
+                                "Allegation_Category": item.get("Error", "Unknown LLM Error"),
+                                "Specific_Allegation_Summary": item.get("Content_Snippet", "")[:500] + f" ... (Full Error: {item.get('Error', 'N/A')})",
+                                "Involved_Defendants_CoConspirators": "N/A",
+                                "Pin_Cite_Page": f"P{error_page_id}", # Consistent key with template
+                                "Pin_Cite_Paragraph": "Error processing" # Consistent key with template
                             })
                         else:
                             all_extracted_data.append({
-                                "Product Name": item.get("Product_Name", "N/A"),
-                                "Allegation Category": item.get("Allegation_Category", "N/A"),
-                                "Specific Allegation Summary": item.get("Specific_Allegation_Summary", "N/A"),
-                                "Involved Defendants/Co-Conspirators (as per the allegation)": item.get(
+                                "Product_Name": item.get("Product_Name", "N/A"),
+                                "Allegation_Category": item.get("Allegation_Category", "N/A"),
+                                "Specific_Allegation_Summary": item.get("Specific_Allegation_Summary", "N/A"),
+                                "Involved_Defendants_CoConspirators": item.get(
                                     "Involved_Defendants_CoConspirators", "N/A"),
-                                "Source Complaint": "Walmart Complaint, 2:25-cv-01383, Doc. 1",
-                                "Pin Cite (Page #, Paragraph #)": f"p. {item.get('Pin_Cite_Page', 'N/A')}, ¶{item.get('Pin_Cite_Paragraph', 'N/A')}"
+                                "Pin_Cite_Page": item.get("Pin_Cite_Page", "N/A"),
+                                "Pin_Cite_Paragraph": item.get("Pin_Cite_Paragraph", "N/A")
                             })
                     print(
                         f"  [Collected] Task {i + 1}/{total_submitted_tasks} complete. Total allegations so far: {len(all_extracted_data)} entries.")
@@ -316,77 +305,30 @@ def upload_file():
                     print(f"  [Collection Critical Error] Error collecting future result {i + 1}/{total_submitted_tasks}: {e}")
                     traceback.print_exc()
                     all_extracted_data.append({
-                        "Product Name": "ERROR",
-                        "Allegation Category": "Future Result Collection Error",
-                        "Specific Allegation Summary": str(e)[:500],
-                        "Involved Defendants/Co-Conspirators (as per the allegation)": "N/A",
-                        "Source Complaint": "Walmart Complaint, 2:25-cv-01383, Doc. 1",
-                        "Pin Cite (Page #, Paragraph #)": "N/A"
+                        "Product_Name": "ERROR",
+                        "Allegation_Category": "Future Result Collection Error",
+                        "Specific_Allegation_Summary": str(e)[:500],
+                        "Involved_Defendants_CoConspirators": "N/A",
+                        "Pin_Cite_Page": "N/A", # Consistent key with template
+                        "Pin_Cite_Paragraph": "N/A" # Consistent key with template
                     })
             print(f"--- Finished collecting all {total_submitted_tasks} submitted results. ---")
 
             if not all_extracted_data:
                 flash("No specific allegations identified by the LLM or no processable text found.", "info")
-                all_extracted_data.append({"Message": "No specific allegations identified by the LLM."})
-
-            df = pd.DataFrame(all_extracted_data)
-
-            # Post-processing for desired Excel format (sorting and blanking product names)
-            if not df.empty and "Product Name" in df.columns:
-                df_processed = df.copy()
-
-                def extract_page_num_for_sort(cite_str):
-                    try:
-                        if isinstance(cite_str, str) and cite_str.startswith("p. "):
-                            match = re.search(r"p\. (\d+),", cite_str)
-                            if match:
-                                return int(match.group(1))
-                    except:
-                        pass
-                    return float('inf')
-
-                df_processed['sortable_page'] = df_processed['Pin Cite (Page #, Paragraph #)'].apply(
-                    extract_page_num_for_sort)
-
-                df_processed.sort_values(by=["Product Name", 'sortable_page'], inplace=True, kind='mergesort',
-                                         na_position='last')
-                df_processed.drop('sortable_page', axis=1, inplace=True, errors='ignore')
-
-                df_processed['Product Name Display'] = df_processed['Product Name']
-                for i in range(1, len(df_processed)):
-                    current_product = df_processed.iloc[i]['Product Name']
-                    prev_product = df_processed.iloc[i - 1]['Product Name']
-                    if current_product == prev_product and \
-                            current_product not in ["General Allegation", "ERROR", "N/A",
-                                                     "General Anticompetitive Conduct"]:
-                        df_processed.iloc[i, df_processed.columns.get_loc('Product Name Display')] = ""
-
-                final_columns_ordered = ["Product Name Display", "Allegation Category", "Specific Allegation Summary",
-                                        "Involved Defendants/Co-Conspirators (as per the allegation)",
-                                        "Source Complaint", "Pin Cite (Page #, Paragraph #)"]
-
-                cols_to_use = [col for col in final_columns_ordered if col in df_processed.columns]
-                df_excel = df_processed[cols_to_use].rename(columns={"Product Name Display": "Product Name"})
-            elif df.empty:
-                df_excel = pd.DataFrame(columns=["Product Name", "Allegation Category", "Specific Allegation Summary",
-                                                 "Involved Defendants/Co-Conspirators (as per the allegation)",
-                                                 "Source Complaint", "Pin Cite (Page #, Paragraph #)"])
+                # Ensure an empty or message-only item is sent if no data
+                results = [{"Product_Name": "No Data", "Allegation_Category": "N/A",
+                            "Specific_Allegation_Summary": "No specific allegations identified by the LLM or no processable text found.",
+                            "Involved_Defendants_CoConspirators": "N/A", "Pin_Cite_Page": "N/A",
+                            "Pin_Cite_Paragraph": "N/A"}]
             else:
-                df_excel = df
-
-            # Construct the Excel filename
-            file_name_without_extension = os.path.splitext(original_filename)[0]
-            excel_filename = f"{file_name_without_extension}-analysis.xlsx"
-            excel_filepath = os.path.join(OUTPUT_FOLDER, excel_filename)
-            df_excel.to_excel(excel_filepath, index=False)
-            print(f"\n--- Excel file generated: {excel_filepath} ---")
-            return send_file(excel_filepath, as_attachment=True)
+                results = all_extracted_data
 
         except Exception as e:
             print(f"\n--- ERROR in upload_file (main processing loop): {e} ---")
             traceback.print_exc()
             flash(f"Processing error: {str(e)}", "danger")
-            return render_template('upload.html')
+            results = [] # Clear results on major error
         finally:
             if 'executor' in locals() and executor:
                 executor.shutdown(wait=True)
@@ -401,15 +343,18 @@ def upload_file():
                     flash(f"Note: Could not remove temporary file {original_filename}. Manual cleanup may be needed.",
                           "warning")
 
-    return render_template('upload.html')
-
+    return render_template('upload.html', results=results)
 
 if __name__ == '__main__':
     if not gemini_model_global:
         print(
             "\n--- WARNING: Google Gemini model not initialized. Check API Key/Model Name in .env and ensure Gemini client setup was successful. ---")
     else:
-        # For production deployment, use waitress:
-        serve(app, host='0.0.0.0', port=5000, threads=10)  # Adjust threads as needed
-        # For development with Flask's built-in server (debug=True, use_reloader=False)
-        # app.run(debug=True, use_reloader=False)
+        try:
+            # For production deployment, use waitress:
+            serve(app, host='0.0.0.0', port=5000, threads=10)  # Adjust threads as needed
+            # For development with Flask's built-in server (debug=True, use_reloader=False)
+            # app.run(debug=True, use_reloader=False)
+        except Exception as e:
+            print(f"Error starting the Flask application: {e}")
+            traceback.print_exc() # This will print the full error stack to your console

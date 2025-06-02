@@ -1,32 +1,61 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Complaint Analyzer</title>
+    <title>Legal Complaint Analyzer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-    <h1>Upload Legal Complaint Document</h1>
-    {% with messages = get_flashed_messages() %}
-      {% if messages %}
-        <ul class=flashes>
-        {% for message in messages %}
-          <li>{{ message }}</li>
-        {% endfor %}
-        </ul>
-      {% endif %}
-    {% endwith %}
-    <form method="post" enctype="multipart/form-data">
-        <div>
-            <label for="file">Choose file:</label>
-            <input type="file" name="file" id="file" required>
-        </div>
-        <div>
-            <label for="page_limit">Process only first N pages/chunks (optional, leave blank for all):</label>
-            <input type="number" name="page_limit" id="page_limit" min="1">
-        </div>
-        <br>
-        <input type="submit" value="Upload and Process">
-    </form>
+    <div class="container">
+        <header>
+            <h1>Legal Complaint Analyzer</h1>
+            <p>Analyze legal documents to identify key allegations.</p>
+        </header>
+
+        <section class="analyzer-tool">
+            <div class="tool-card">
+                <h2>Analyze Document</h2>
+                <p>Upload a legal complaint document to identify potential anticompetitive allegations.</p>
+
+                {% with messages = get_flashed_messages() %}
+                    {% if messages %}
+                        <ul class="flashes">
+                            {% for message in messages %}
+                                <li>{{ message }}</li>
+                            {% endfor %}
+                        </ul>
+                    {% endif %}
+                {% endwith %}
+
+                <form method="post" enctype="multipart/form-data" class="upload-form">
+                    <div class="form-group">
+                        <label for="file">Choose file:</label>
+                        <input type="file" name="file" id="file" required>
+                    </div>
+                    <button type="submit" class="analyze-button">Analyze</button>
+                </form>
+
+                {% if results %}
+                    <div class="results-container">
+                        <h3>Analysis Results:</h3>
+                        {% for result in results %}
+                            <div class="result-item">
+                                <p><strong>Product:</strong> {{ result.Product_Name }}</p>
+                                <p><strong>Allegation:</strong> {{ result.Allegation_Category }}</p>
+                                <p><strong>Summary:</strong> {{ result.Specific_Allegation_Summary }}</p>
+                                <p><strong>Defendants:</strong> {{ result.Involved_Defendants_CoConspirators }}</p>
+                                <p><strong>Cite:</strong> {{ result.Pin_Cite_Page }}</p>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            </div>
+        </section>
+
+        <footer>
+            <p>© 2024 Epiq. All rights reserved.</p>
+        </footer>
+    </div>
 </body>
 </html>
