@@ -1,0 +1,9 @@
+Flask
+google-generativeai
+pandas
+openai
+openpyxl
+pdfplumber
+python-docx
+python-dotenv
+waitress

@@ -1,0 +1,39 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+
+# Distribution / packaging
+.Python
+build/
+dist/
+sdist/
+*.egg
+*.whl
+*.tar.gz
+*.zip
+
+# PyInstaller artifacts
+**/__pycache__
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# OS generated files #
+.DS_Store
+Thumbs.db
+
+# User Specific files
+.env
+
+#Other files that might be in your folder
+outputs/
+uploads/
+v1.zip
