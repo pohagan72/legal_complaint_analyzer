@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template, jsonify, flash, send_from_directory # Import send_from_directory
+from flask import Flask, request, render_template, jsonify, Response
 import os
 import pandas as pd
 import pdfplumber
@@ -9,20 +9,48 @@ import json
 import time
 import traceback
 import re
-from waitress import serve
-
+from waitress import serve # Still keep waitress for local dev/Windows, but Gunicorn for Linux App Service
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Azure Blob Storage imports
+import uuid
+import io
+from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 
 load_dotenv()
 
 app = Flask(__name__)
-# IMPORTANT: Change this for production! Store it securely.
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "your_very_secret_random_key_here_GEMINI_PRODUCTION_READY")
 
-UPLOAD_FOLDER = 'uploads'
-OUTPUT_FOLDER = 'outputs' # Still keep this for temp files
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+# --- Azure Blob Storage Configuration ---
+AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+UPLOAD_CONTAINER_NAME = "uploads"
+OUTPUT_CONTAINER_NAME = "outputs"
+
+# Initialize BlobServiceClient globally or lazily
+blob_service_client = None
+if AZURE_STORAGE_CONNECTION_STRING:
+    try:
+        blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
+        print("Azure Blob Storage client initialized.")
+        # Ensure containers exist (optional, but good for first run)
+        try:
+            blob_service_client.create_container(UPLOAD_CONTAINER_NAME)
+            print(f"Container '{UPLOAD_CONTAINER_NAME}' created (or already exists).")
+        except Exception as e:
+            if "ContainerAlreadyExists" not in str(e): # Check for specific error message
+                print(f"Warning: Could not create '{UPLOAD_CONTAINER_NAME}' container: {e}")
+        try:
+            blob_service_client.create_container(OUTPUT_CONTAINER_NAME)
+            print(f"Container '{OUTPUT_CONTAINER_NAME}' created (or already exists).")
+        except Exception as e:
+            if "ContainerAlreadyExists" not in str(e):
+                print(f"Warning: Could not create '{OUTPUT_CONTAINER_NAME}' container: {e}")
+    except Exception as e:
+        print(f"Error initializing Azure Blob Storage client: {e}")
+else:
+    print("AZURE_STORAGE_CONNECTION_STRING not found. Azure Blob Storage will not work.")
+
 
 # --- Google Gemini Client Initialization ---
 gemini_model_global = None
@@ -137,10 +165,15 @@ def analyze_text_chunk_with_gemini(text_chunk, page_num_or_chunk_id, filename_fo
                 print(f"  [LLM Warning] {error_msg}")
                 return [{"Error": error_msg}]
 
+            # Clean markdown JSON block
             if content_str.startswith("```json"):
                 content_str = content_str.split("```json\n", 1)[1].rsplit("\n```", 1)[0]
-            elif content_str.startswith("```"):
+            elif content_str.startswith("```"): # In case it just gives ```
                 content_str = content_str.split("```\n", 1)[1].rsplit("\n```", 1)[0]
+            
+            # Additional cleanup for potential trailing commas or other JSON issues
+            content_str = re.sub(r',\s*\]', ']', content_str) # Fix trailing commas in arrays
+            content_str = re.sub(r',\s*\}', '}', content_str) # Fix trailing commas in objects
 
             try:
                 parsed_json_obj = json.loads(content_str)
@@ -176,14 +209,17 @@ def analyze_text_chunk_with_gemini(text_chunk, page_num_or_chunk_id, filename_fo
 @app.route('/', methods=['GET'])
 def index():
     """Renders the initial upload form page."""
-    return render_template('upload.html', results=[]) # Ensure results is always an empty list initially
+    return render_template('upload.html', results=[])
 
 @app.route('/analyze', methods=['POST'])
 def analyze_document():
     """Handles the file upload and analysis via AJAX, returns JSON results."""
-    results = [] # Initialize results list for this specific request
-    filepath = None # Initialize filepath to ensure it's defined for cleanup
-    excel_filename = None # Initialize excel_filename
+    results = []
+    input_blob_name = None # To track the unique input blob name for cleanup
+    excel_blob_name = None
+
+    if not blob_service_client:
+        return jsonify({"status": "error", "message": "Azure Blob Storage not initialized. Check connection string."}), 500
 
     try:
         if 'file' not in request.files:
@@ -193,16 +229,30 @@ def analyze_document():
             return jsonify({"status": "error", "message": "No file selected."}), 400
 
         original_filename = file.filename
-        filepath = os.path.join(UPLOAD_FOLDER, original_filename)
-        file.save(filepath)
-        all_extracted_data = []
+        unique_id = str(uuid.uuid4()) # Generate a unique ID for this request
+        input_blob_name = f"{unique_id}_{original_filename}" # Unique name for the uploaded blob
 
+        # Get blob clients for upload and output containers
+        upload_container_client = blob_service_client.get_container_client(UPLOAD_CONTAINER_NAME)
+        output_container_client = blob_service_client.get_container_client(OUTPUT_CONTAINER_NAME)
+
+        # Upload the file to Azure Blob Storage
+        input_blob_client = upload_container_client.get_blob_client(input_blob_name)
+        input_blob_client.upload_blob(file.stream, overwrite=True) # Overwrite if same UUID, shouldn't happen often
+        print(f"Uploaded '{original_filename}' to blob: '{input_blob_name}' in container '{UPLOAD_CONTAINER_NAME}'")
+
+        # Download the blob content into an in-memory stream for processing by pdfplumber/docx
+        download_stream = io.BytesIO()
+        input_blob_client.download_blob().readinto(download_stream)
+        download_stream.seek(0) # Reset stream position to the beginning for library consumption
+
+        all_extracted_data = []
         max_concurrent_llm_calls = 50
         executor = ThreadPoolExecutor(max_workers=max_concurrent_llm_calls)
         futures = []
 
         if original_filename.lower().endswith('.pdf'):
-            with pdfplumber.open(filepath) as pdf:
+            with pdfplumber.open(download_stream) as pdf: # Use the in-memory stream
                 num_pages_to_process = len(pdf.pages)
                 print(f"\n--- Starting concurrent processing of {num_pages_to_process} PDF pages ---")
                 for i in range(num_pages_to_process):
@@ -214,7 +264,7 @@ def analyze_document():
                         futures.append(executor.submit(
                             analyze_text_chunk_with_gemini,
                             text,
-                            str(page_num_display),
+                            str(page_num_display), # Pass as string
                             original_filename
                         ))
                         print(f"  [Submitted] Page {page_num_display} for LLM analysis.")
@@ -225,13 +275,13 @@ def analyze_document():
                             "Allegation_Category": "N/A",
                             "Specific_Allegation_Summary": f"No text extracted from PDF page {page_num_display}.",
                             "Involved_Defendants_CoConspirators": "N/A",
-                            "Pin_Cite_Page": f"p. {page_num_display}",
+                            "Pin_Cite_Page": str(page_num_display), # Ensure consistent with LLM output for pages
                             "Pin_Cite_Paragraph": "N/A"
                         })
 
         elif original_filename.lower().endswith('.docx'):
             paras_per_chunk = 20
-            doc = Document(filepath)
+            doc = Document(download_stream) # Use the in-memory stream
             all_paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
             total_paragraphs = len(all_paragraphs)
             num_chunks_to_process = (total_paragraphs + paras_per_chunk - 1) // paras_per_chunk if total_paragraphs > 0 else 0
@@ -241,6 +291,8 @@ def analyze_document():
             for i in range(0, total_paragraphs, paras_per_chunk):
                 chunk_paras = all_paragraphs[i: i + paras_per_chunk]
                 text_chunk = "\n".join(chunk_paras)
+                
+                chunk_id_display = f"DOCX_Chunk_{chunk_num_display}" # Define chunk_id_display here
 
                 if text_chunk.strip():
                     futures.append(executor.submit(
@@ -251,7 +303,6 @@ def analyze_document():
                     ))
                     print(f"  [Submitted] Chunk {chunk_id_display} for LLM analysis.")
                 else:
-                    chunk_id_display = f"DOCX_Chunk_{chunk_num_display}"
                     print(f"  [Skipped] Chunk {chunk_id_display} (no text extracted).")
                     all_extracted_data.append({
                         "Product_Name": "N/A",
@@ -286,7 +337,7 @@ def analyze_document():
                             "Allegation_Category": item.get("Error", "Unknown LLM Error"),
                             "Specific_Allegation_Summary": item.get("Content_Snippet", "")[:500] + f" ... (Full Error: {item.get('Error', 'N/A')})",
                             "Involved_Defendants_CoConspirators": "N/A",
-                            "Pin_Cite_Page": f"P{error_page_id}",
+                            "Pin_Cite_Page": error_page_id, # Just the ID, frontend will format
                             "Pin_Cite_Paragraph": "Error processing"
                         })
                     else:
@@ -318,60 +369,83 @@ def analyze_document():
         df = pd.DataFrame(all_extracted_data)
 
         # Post-processing for desired Excel format (sorting and blanking product names)
-        if not df.empty and "Product_Name" in df.columns: # Use Product_Name as per LLM output
+        if not df.empty and "Product_Name" in df.columns:
             df_processed = df.copy()
 
             def extract_page_num_for_sort(cite_str):
                 try:
-                    if isinstance(cite_str, str) and cite_str.startswith("p. "):
-                        match = re.search(r"p\. (\d+),", cite_str)
+                    if isinstance(cite_str, str) and cite_str.isdigit():
+                        return int(cite_str)
+                    elif isinstance(cite_str, str) and cite_str.startswith('DOCX_Chunk_'):
+                        # Extract number for sorting, push DOCX chunks to end if mixed
+                        match = re.search(r'DOCX_Chunk_(\d+)', cite_str)
                         if match:
-                            return int(match.group(1))
+                            return 1000000 + int(match.group(1)) # Large number to put after PDF pages
                 except:
                     pass
-                return float('inf')
+                return float('inf') # Puts N/A, ERROR, etc. at the end
 
-            df_processed['sortable_page'] = df_processed['Pin_Cite_Page'].apply( # Use Pin_Cite_Page
-                extract_page_num_for_sort)
-
-            df_processed.sort_values(by=["Product_Name", 'sortable_page'], inplace=True, kind='mergesort', # Use Product_Name
+            df_processed['sortable_pin_cite_page'] = df_processed['Pin_Cite_Page'].apply(extract_page_num_for_sort)
+            df_processed.sort_values(by=["Product_Name", 'sortable_pin_cite_page'], inplace=True, kind='mergesort',
                                      na_position='last')
-            df_processed.drop('sortable_page', axis=1, inplace=True, errors='ignore')
+            df_processed.drop('sortable_pin_cite_page', axis=1, inplace=True, errors='ignore')
 
-            df_processed['Product Name Display'] = df_processed['Product_Name'] # Use Product_Name
+            df_processed['Product Name Display'] = df_processed['Product_Name']
             for i in range(1, len(df_processed)):
-                current_product = df_processed.iloc[i]['Product_Name'] # Use Product_Name
-                prev_product = df_processed.iloc[i - 1]['Product_Name'] # Use Product_Name
+                current_product = df_processed.iloc[i]['Product_Name']
+                prev_product = df_processed.iloc[i - 1]['Product_Name']
                 if current_product == prev_product and \
                         current_product not in ["General Allegation", "ERROR", "N/A",
                                                  "General Anticompetitive Conduct"]:
                     df_processed.iloc[i, df_processed.columns.get_loc('Product Name Display')] = ""
 
-            final_columns_ordered = ["Product Name Display", "Allegation_Category", "Specific_Allegation_Summary", # Use correct keys
-                                    "Involved_Defendants_CoConspirators",
-                                    "Pin_Cite_Page", "Pin_Cite_Paragraph"] # Use correct keys
+            final_columns_ordered = [
+                "Product Name Display",
+                "Allegation_Category",
+                "Specific_Allegation_Summary",
+                "Involved_Defendants_CoConspirators",
+                "Pin_Cite_Page",
+                "Pin_Cite_Paragraph"
+            ]
 
             cols_to_use = [col for col in final_columns_ordered if col in df_processed.columns]
-            df_excel = df_processed[cols_to_use].rename(columns={"Product Name Display": "Product Name"})
+            df_excel = df_processed[cols_to_use].rename(columns={
+                "Product Name Display": "Product Name",
+                "Allegation_Category": "Allegation Category",
+                "Specific_Allegation_Summary": "Specific Allegation Summary",
+                "Involved_Defendants_CoConspirators": "Involved Defendants/Co-Conspirators (as per the allegation)",
+                "Pin_Cite_Page": "Pin Cite (Page/Chunk)",
+                "Pin_Cite_Paragraph": "Pin Cite (Paragraph #)"
+            })
         elif df.empty:
-            df_excel = pd.DataFrame(columns=["Product Name", "Allegation_Category", "Specific_Allegation_Summary",
-                                             "Involved_Defendants_CoConspirators",
-                                             "Pin_Cite_Page", "Pin_Cite_Paragraph"])
-        else:
-            df_excel = df.rename(columns={"Product_Name": "Product Name", # Ensure consistent output for template/excel
-                                            "Allegation_Category": "Allegation Category",
-                                            "Specific_Allegation_Summary": "Specific Allegation Summary",
-                                            "Involved_Defendants_CoConspirators": "Involved Defendants/Co-Conspirators (as per the allegation)",
-                                            "Pin_Cite_Page": "Pin Cite (Page #)", # Adjust as needed for Excel
-                                            "Pin_Cite_Paragraph": "Pin Cite (Paragraph #)" # Adjust as needed for Excel
-                                            })
+            df_excel = pd.DataFrame(columns=[
+                "Product Name", "Allegation Category", "Specific Allegation Summary",
+                "Involved Defendants/Co-Conspirators (as per the allegation)",
+                "Pin Cite (Page/Chunk)", "Pin Cite (Paragraph #)"
+            ])
+        else: # Fallback if Product_Name column isn't found but df isn't empty
+            df_excel = df.rename(columns={
+                "Product_Name": "Product Name",
+                "Allegation_Category": "Allegation Category",
+                "Specific_Allegation_Summary": "Specific Allegation Summary",
+                "Involved_Defendants_CoConspirators": "Involved Defendants/Co-Conspirators (as per the allegation)",
+                "Pin_Cite_Page": "Pin Cite (Page/Chunk)",
+                "Pin_Cite_Paragraph": "Pin Cite (Paragraph #)"
+            })
 
-        # Construct the Excel filename and save it
+
+        # Save Excel to an in-memory stream and upload to Azure Blob Storage
         file_name_without_extension = os.path.splitext(original_filename)[0]
-        excel_filename = f"{file_name_without_extension}-analysis.xlsx"
-        excel_filepath = os.path.join(OUTPUT_FOLDER, excel_filename)
-        df_excel.to_excel(excel_filepath, index=False)
-        print(f"\n--- Excel file generated: {excel_filepath} ---")
+        excel_blob_name = f"{unique_id}_{file_name_without_extension}-analysis.xlsx" # Unique name for output blob
+        
+        output_stream = io.BytesIO()
+        df_excel.to_excel(output_stream, index=False)
+        output_stream.seek(0) # Reset stream for upload
+
+        output_blob_client = output_container_client.get_blob_client(excel_blob_name) 
+        
+        output_blob_client.upload_blob(output_stream, overwrite=True)
+        print(f"\n--- Excel file generated and uploaded to blob: '{excel_blob_name}' in container '{OUTPUT_CONTAINER_NAME}' ---")
 
         # Prepare results for JSON response
         results_for_json = all_extracted_data
@@ -381,7 +455,7 @@ def analyze_document():
                                 "Involved_Defendants_CoConspirators": "N/A", "Pin_Cite_Page": "N/A",
                                 "Pin_Cite_Paragraph": "N/A"}]
 
-        return jsonify({"status": "success", "results": results_for_json, "excel_filename": excel_filename}), 200
+        return jsonify({"status": "success", "results": results_for_json, "excel_filename": excel_blob_name}), 200
 
     except Exception as e:
         print(f"\n--- ERROR in analyze_document (main processing loop): {e} ---")
@@ -391,28 +465,47 @@ def analyze_document():
         if 'executor' in locals() and executor:
             executor.shutdown(wait=True)
             print("ThreadPoolExecutor shut down.")
-
-        if filepath and os.path.exists(filepath):
-            try:
-                os.remove(filepath)
-                print(f"Cleaned up uploaded file: {filepath}")
-            except Exception as e_remove:
-                print(f"Error cleaning up {filepath}: {e_remove}")
+        
+        # We don't remove uploaded files immediately from blob storage
+        # as they could be useful for debugging or future reference.
+        # Implement a separate blob lifecycle management policy if needed.
 
 
 @app.route('/download_report/<filename>')
 def download_report(filename):
-    """Serves the generated Excel report for download."""
+    """Serves the generated Excel report for download from Azure Blob Storage."""
+    if not blob_service_client:
+        return "Azure Blob Storage not initialized.", 500
+
     try:
-        # Ensure the filename is safe to prevent directory traversal attacks
-        # Flask's send_from_directory handles this automatically, but it's good to be aware.
-        print(f"Attempting to serve file: {filename} from {OUTPUT_FOLDER}")
-        return send_from_directory(OUTPUT_FOLDER, filename, as_attachment=True)
-    except FileNotFoundError:
-        print(f"File not found: {filename} in {OUTPUT_FOLDER}")
-        return "File not found.", 404
+        output_container_client = blob_service_client.get_container_client(OUTPUT_CONTAINER_NAME)
+        output_blob_client = output_container_client.get_blob_client(filename)
+        
+        if not output_blob_client.exists():
+            print(f"Blob not found: {filename} in '{OUTPUT_CONTAINER_NAME}' container.")
+            return "File not found.", 404
+        
+        # Download the blob content into an in-memory stream
+        blob_data = output_blob_client.download_blob().readall()
+        
+        # Determine content type (MIME type)
+        mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" # For .xlsx
+        
+        # Extract original filename for download prompt (if it was uniquely named)
+        original_download_name = filename
+        if '_' in filename: # Assuming format unique_id_originalfilename.xlsx
+            try:
+                parts = filename.split('_', 1)
+                if len(parts) > 1:
+                    original_download_name = parts[1] 
+            except Exception as e:
+                print(f"Could not parse original filename from unique blob name {filename}: {e}")
+
+        response = Response(blob_data, mimetype=mime_type)
+        response.headers["Content-Disposition"] = f"attachment; filename={original_download_name}"
+        return response
     except Exception as e:
-        print(f"Error serving file {filename}: {e}")
+        print(f"Error serving file '{filename}' from blob storage: {e}")
         traceback.print_exc()
         return "Error serving file.", 500
 
@@ -421,12 +514,15 @@ if __name__ == '__main__':
     if not gemini_model_global:
         print(
             "\n--- WARNING: Google Gemini model not initialized. Check API Key/Model Name in .env and ensure Gemini client setup was successful. ---")
-    else:
-        try:
-            # For production deployment, use waitress:
-            serve(app, host='0.0.0.0', port=5000, threads=10)
-            # For development with Flask's built-in server (debug=True, use_reloader=False)
-            # app.run(debug=True, use_reloader=False)
-        except Exception as e:
-            print(f"Error starting the Flask application: {e}")
-            traceback.print_exc()
+    if not blob_service_client:
+        print("\n--- WARNING: Azure Blob Storage client not initialized. Check AZURE_STORAGE_CONNECTION_STRING in .env. ---")
+    try:
+        # For production deployment on Azure Linux App Service, Gunicorn is typically used
+        # For local development or Windows App Service, waitress is fine.
+        print("\n--- Starting Flask application using Waitress (for local/Windows dev). For Azure Linux, Gunicorn will be used. ---")
+        serve(app, host='0.0.0.0', port=5000, threads=10)
+        # For development with Flask's built-in server (less suitable for production)
+        # app.run(debug=True, use_reloader=False, host='0.0.0.0', port=5000)
+    except Exception as e:
+        print(f"Error starting the Flask application: {e}")
+        traceback.print_exc()

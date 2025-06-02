@@ -1,5 +1,7 @@
+azure-storage-blob
 Flask
 google-generativeai
+gunicorn
 pandas
 openai
 openpyxl

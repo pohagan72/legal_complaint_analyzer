@@ -99,11 +99,8 @@ document.addEventListener('DOMContentLoaded', () => {
             </a>
             <p class="download-tip">Click to download the full analysis report.</p>
         `;
-        // Insert the download button right after the <h3>Analysis Results:</h3>
-        // If resultsContainer is already populated with the h3, this will place it correctly.
         resultsContainer.appendChild(downloadDiv);
     }
-
 
     // Renamed function to display analysis results (excluding the download button logic)
     function displayAnalysisResults(results) {
@@ -130,7 +127,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return a.localeCompare(b);
         });
 
-
         sortedProductNames.forEach(productName => {
             const productGroupDiv = document.createElement('div');
             productGroupDiv.className = 'product-group-card';
@@ -144,7 +140,6 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
             productGroupDiv.innerHTML = headerHtml;
 
-
             const groupContent = document.createElement('div');
             groupContent.className = 'group-content hidden'; // Initially hidden
 
@@ -155,7 +150,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Handle Pin_Cite_Page and Pin_Cite_Paragraph for display
                 let pinCiteDisplay = 'N/A';
                 if (result.Pin_Cite_Page && result.Pin_Cite_Page !== 'N/A') {
-                    pinCiteDisplay = `p. ${result.Pin_Cite_Page}`;
+                    if (String(result.Pin_Cite_Page).startsWith('DOCX_Chunk_')) {
+                        // For DOCX chunks, display as is
+                        pinCiteDisplay = result.Pin_Cite_Page;
+                    } else {
+                        // Assume it's a PDF page number or a number-like string
+                        pinCiteDisplay = `p. ${result.Pin_Cite_Page}`;
+                    }
+                    
                     if (result.Pin_Cite_Paragraph && result.Pin_Cite_Paragraph !== 'N/A') {
                         pinCiteDisplay += `, ¶${result.Pin_Cite_Paragraph}`;
                     }
