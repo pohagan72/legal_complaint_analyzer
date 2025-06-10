@@ -3,9 +3,12 @@ Flask
 google-generativeai
 gunicorn
 pandas
+numpy
 openai
 openpyxl
 pdfplumber
 python-docx
 python-dotenv
+sentence-transformers
+scikit-learn
 waitress

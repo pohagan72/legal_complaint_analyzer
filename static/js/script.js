@@ -5,6 +5,64 @@ document.addEventListener('DOMContentLoaded', () => {
     const resultsContainer = document.getElementById('resultsContainer');
     const loadingOverlay = document.getElementById('loadingOverlay');
     const flashesContainer = document.getElementById('flashesContainer');
+    
+    // New: Drag and Drop elements
+    const fileDropArea = document.getElementById('fileDropArea');
+    const fileNameDisplay = document.getElementById('fileNameDisplay');
+    const fileDropMessage = document.querySelector('.file-drop-message');
+    const fileDropIcon = document.querySelector('.file-drop-icon');
+
+    // --- Drag and Drop Functionality ---
+    if (fileDropArea) {
+        // Prevent default browser behaviors
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            fileDropArea.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+            }, false);
+        });
+
+        // Add visual feedback on drag over
+        ['dragenter', 'dragover'].forEach(eventName => {
+            fileDropArea.addEventListener(eventName, () => {
+                fileDropArea.classList.add('drag-over');
+            }, false);
+        });
+
+        // Remove visual feedback on drag leave
+        ['dragleave', 'drop'].forEach(eventName => {
+            fileDropArea.addEventListener(eventName, () => {
+                fileDropArea.classList.remove('drag-over');
+            }, false);
+        });
+
+        // Handle the dropped file
+        fileDropArea.addEventListener('drop', (e) => {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+
+            if (files.length > 0) {
+                fileInput.files = files; // Assign dropped file to the hidden input
+                updateFileDisplay(files[0]);
+            }
+        }, false);
+    }
+    
+    // Update display when file is selected via click
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files.length > 0) {
+            updateFileDisplay(fileInput.files[0]);
+        }
+    });
+
+    // Helper function to update the drop area's UI
+    function updateFileDisplay(file) {
+        if (file) {
+            fileNameDisplay.textContent = file.name;
+            if(fileDropMessage) fileDropMessage.style.display = 'none';
+            if(fileDropIcon) fileDropIcon.style.display = 'none';
+        }
+    }
 
     // Function to show the loading overlay
     function showLoading() {
@@ -48,6 +106,17 @@ document.addEventListener('DOMContentLoaded', () => {
             displayFlashMessage("Please select a file to analyze.", "warning");
             return;
         }
+
+        // --- NEW: Client-side file type validation ---
+        const allowedExtensions = ['.pdf', '.docx'];
+        const fileName = fileInput.files[0].name;
+        const fileExtension = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
+        
+        if (!allowedExtensions.includes(fileExtension)) {
+            displayFlashMessage("Invalid file type. Please upload a PDF or DOCX document.", "danger");
+            return; // Stop the submission
+        }
+        // --- END of new validation ---
 
         const formData = new FormData(analyzeForm);
 

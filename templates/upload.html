@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Legal Complaint Analyzer</title>
+    <title>Epiq AI Innovation - Complaint Analyzer</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
@@ -11,21 +11,25 @@
 <body>
     <div class="container">
         <header>
-            <h1>Legal Complaint Analyzer</h1>
-            <p>Analyze legal documents to identify key allegations.</p>
+            <h1>Epiq AI Innovation</h1>
+            <p>AI Agent for Legal Complaint Analysis</p>
         </header>
 
         <section class="analyzer-tool">
             <div class="tool-card">
-                <h2>Analyze Document</h2>
-                <p>Upload a legal complaint document to identify potential anticompetitive allegations.</p>
+                <!-- Line break added to the text here -->
+                <p>Automatically identify and extract allegations from legal complaints.<br>Supports Word and PDF documents only.</p>
 
                 <ul id="flashesContainer" class="flashes" style="display:none;"></ul>
 
                 <form id="analyzeForm" class="upload-form">
                     <div class="form-group">
-                        <label for="file">Choose file:</label>
-                        <input type="file" name="file" id="file" required>
+                        <label for="file" id="fileDropArea" class="file-drop-area">
+                            <i class="fas fa-upload file-drop-icon"></i>
+                            <span class="file-drop-message">Drag & drop your document here, or click to select a file.</span>
+                            <span id="fileNameDisplay" class="file-drop-filename"></span>
+                            <input type="file" name="file" id="file" required accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+                        </label>
                     </div>
                     <button type="submit" class="analyze-button">Analyze</button>
                 </form>
@@ -44,8 +48,8 @@
     <!-- Loading Overlay -->
     <div id="loadingOverlay">
         <div class="spinner"></div>
-        <p>Analyzing document...</p>
-        <p class="sub-text">This may take a moment depending on document size.</p>
+        <p>Epiq AI is analyzing your document...</p>
+        <p class="sub-text">This may take a moment, depending on document size.</p>
     </div>
 
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
