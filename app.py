@@ -9,7 +9,7 @@ import json
 import time
 import traceback
 import re
-from waitress import serve # Still keep waitress for local dev/Windows, but Gunicorn for Linux App Service
+from waitress import serve
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Azure Blob Storage imports
@@ -51,7 +51,6 @@ if AZURE_STORAGE_CONNECTION_STRING:
 else:
     print("AZURE_STORAGE_CONNECTION_STRING not found. Azure Blob Storage will not work.")
 
-
 # --- Google Gemini Client Initialization ---
 gemini_model_global = None
 gemini_api_key_global = os.getenv("GOOGLE_API_KEY")
@@ -67,6 +66,35 @@ if gemini_api_key_global and gemini_model_name_global:
         gemini_model_global = None
 else:
     print("Google Gemini API Key or Model Name not found. Gemini features will not work.")
+
+# --- NEW: Text Sanitization Function for LLM Input ---
+def sanitize_text_for_json(text):
+    """
+    Sanitizes text to ensure it's safe for inclusion in a JSON string value.
+    This replaces problematic characters like unescaped backslashes, double quotes,
+    and certain control characters, preparing text before sending to the LLM.
+    """
+    if not isinstance(text, str):
+        return str(text) # Ensure the input is a string
+
+    # Escape backslashes: replace single '\' with double '\\'.
+    # This must be done carefully to avoid double-escaping already escaped characters.
+    # Simplest reliable way is to escape all backslashes first, then quotes.
+    # The LLM is then expected to convert standard newlines (\n) to \\n, etc.
+    # If the original text contains 'C:\Users\Docs', it should become 'C:\\Users\\Docs' in JSON.
+    text = text.replace('\\', '\\\\')
+
+    # Escape double quotes: replace '"' with '\"'.
+    text = text.replace('"', '\\"')
+    
+    # Replace common control characters (ASCII 0-31, 127) that are problematic in JSON
+    # except for standard whitespace that JSON handles ('\t', '\n', '\r').
+    # These non-standard control characters are not allowed unescaped in JSON strings.
+    # They should ideally be \\uXXXX escaped, but simpler to remove/replace for LLM input robustness.
+    # Removing them ensures the LLM doesn't attempt to copy invalid chars verbatim.
+    text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', text)
+
+    return text
 
 
 def analyze_text_chunk_with_gemini(text_chunk, page_num_or_chunk_id, filename_for_context):
@@ -84,21 +112,22 @@ def analyze_text_chunk_with_gemini(text_chunk, page_num_or_chunk_id, filename_fo
     Your entire response MUST be a single JSON object with one top-level key: "allegations".
     The value of "allegations" MUST be a list of JSON objects. Each object in the list MUST represent ONE DISTINCT allegation related to a specific drug.
 
-    Each allegation object MUST have these 6 keys:
+    Each allegation object MUST have these 7 keys: # CHANGED: From 6 to 7 keys for Item 4
     1.  "Product_Name": THIS IS MANDATORY. Provide the specific generic drug name(s) (and brand name in parentheses if available, e.g., "Carbamazepine ER (Tegretol XR)") that is the subject of THIS specific allegation. If multiple drugs are involved in the *same single distinct action*, list them comma-separated. If NO specific drug is mentioned in the immediate context of a general anticompetitive discussion, that discussion SHOULD NOT be included in the output. Every row MUST be tied to a specific drug.
     2.  "Allegation_Category": Categorize the primary anticompetitive conduct for THIS allegation (e.g., "Market Allocation", "Price Fixing", "Bid Rigging", "Information Exchange", "Refusal to Compete", "Fair Share Conspiracy", "Other Anticompetitive Conduct"). Choose the most fitting.
-    3.  "Specific_Allegation_Summary": Quote the **1-3 most relevant paragraphs verbatim** from the source text that contain the core details of the alleged anticompetitive conduct.  Ensure the quoted text directly supports the identified allegation and mentions the specific drug involved.  Do not summarize.  If the relevant information spans more than 3 paragraphs, prioritize the most pertinent ones.
+    3.  "Specific_Allegation_Summary": Quote the **full, entire relevant paragraphs verbatim** from the source text that contain the core details of the alleged anticompetitive conduct. Ensure the quoted text directly supports the identified allegation and mentions the specific drug involved. Do not summarize. Include all text of *each* paragraph that is truly relevant. Prioritize completeness over brevity for this field. # MODIFIED: For Item 5 (Full Paragraph Text)
     4.  "Involved_Defendants_CoConspirators": List ONLY the company names (e.g., "Sandoz, Taro") explicitly mentioned in the text associated with THIS SPECIFIC allegation as participating in or directly affected by the conduct.
     5.  "Pin_Cite_Page": The exact PAGE NUMBER (e.g., "61", "123") of this chunk, provided as '{{page_num_or_chunk_id}}'.
-    6.  "Pin_Cite_Paragraph": The PARAGRAPH NUMBER from the original document if it's explicitly visible (e.g., "251"). If paragraph numbers are not explicit or cannot be clearly determined from the provided text chunk, state "N/A".
+    6.  "Pin_Cite_Paragraph": The PARAGRAPH NUMBER from the original document if it's explicitly visible (e.g., "251") *within the text you are quoting for "Specific_Allegation_Summary"*. If a paragraph number (e.g., "251.") is visible as a prefix to a quoted paragraph, you MUST extract and provide it here. If paragraph numbers are not explicit or cannot be clearly determined from the provided text chunk, state "N/A". # MODIFIED: For Item 6 (Pin Cites N/A)
+    7.  "Other_Named_Entities": List any other relevant individuals or companies (not already listed in "Involved_Defendants_CoConspirators") who are explicitly mentioned in the text of THIS specific allegation and are relevant to it, comma-separated. If none are explicitly mentioned, state "N/A". # ADDED: For Item 4
 
     GUIDELINES:
     - THOROUGHNESS: Scan *only* the provided text from this page/chunk for allegations that name a specific drug.
     - GRANULARITY: Each distinct allegation (e.g., a specific agreement, a specific bid rigging instance, a specific price increase for a drug) should be a SEPARATE JSON object, even if for the same drug.
     - STRICT PRODUCT NAME: DO NOT output any allegation where a specific drug name is not clearly and directly identifiable in the text of the allegation itself. General conspiracy discussions without a drug name should be omitted.
     - PRECISION: Ensure "Involved_Defendants_CoConspirators" and "Specific_Allegation_Summary" are strictly derived from the text supporting THAT particular allegation.
-    - JSON FORMAT: The final output MUST be a valid JSON object with the "allegations" key.
-
+    - JSON FORMAT: The final output MUST be a valid JSON object with the "allegations" key. All string values within the JSON MUST be properly escaped for JSON syntax. For example, literal newline characters (Python's '\n') must be escaped as '\\n', double quotes (Python's '"') inside a string value must be escaped as '\"', and literal backslashes (Python's '\') must be escaped as '\\\\'. This is crucial for correctly representing verbatim text in JSON.
+    
     Example (Desired Structure for a single page with multiple allegations for one drug):
     {{
       "allegations": [
@@ -108,15 +137,17 @@ def analyze_text_chunk_with_gemini(text_chunk, page_num_or_chunk_id, filename_fo
           "Specific_Allegation_Summary": "\"251. In 2009, Sandoz and Taro conspired to divide the market for Carbamazepine ER, which included 'discussing who would target Walmart.'\"",
           "Involved_Defendants_CoConspirators": "Sandoz, Taro, Walmart",
           "Pin_Cite_Page": "{page_num_or_chunk_id}",
-          "Pin_Cite_Paragraph": "251"
+          "Pin_Cite_Paragraph": "251",
+          "Other_Named_Entities": "N/A" # ADDED: For Item 4 in example
         }},
         {{
           "Product_Name": "Carbamazepine ER (Tegretol XR)",
           "Allegation_Category": "Price Protection / Market Allocation",
-          "Specific_Allegation_Summary": "\"273. In 2014, Sandoz 'declined repeated bid requests from Walmart' to protect Taro’s price increase on Carbamazepine ER.\"",
+          "Specific_Allegation_Summary": "\"273. In 2014, Sandoz 'declined repeated bid requests from Walmart' to protect Taro’s price increase on Carbamazepine ER.\\\\nThis is a line with a backslash: C:\\\\Users\\\\Doc.\"", # Example with escaped newline and backslash for clarity
           "Involved_Defendants_CoConspirators": "Sandoz, Taro, Walmart",
           "Pin_Cite_Page": "{page_num_or_chunk_id}",
-          "Pin_Cite_Paragraph": "273"
+          "Pin_Cite_Paragraph": "273",
+          "Other_Named_Entities": "John Doe (CEO)" # ADDED: For Item 4 in example
         }}
       ]
     }}
@@ -205,7 +236,6 @@ def analyze_text_chunk_with_gemini(text_chunk, page_num_or_chunk_id, filename_fo
 
     return [{"Error": f"Failed Gemini call for page '{page_num_or_chunk_id}' after {max_retries} attempts (exhausted retries)."}]
 
-
 @app.route('/', methods=['GET'])
 def index():
     """Renders the initial upload form page."""
@@ -232,6 +262,9 @@ def analyze_document():
         unique_id = str(uuid.uuid4()) # Generate a unique ID for this request
         input_blob_name = f"{unique_id}_{original_filename}" # Unique name for the uploaded blob
 
+        # Extract complaint name from original filename for Item 3
+        complaint_name = os.path.splitext(original_filename)[0] # ADDED: For Item 3
+
         # Get blob clients for upload and output containers
         upload_container_client = blob_service_client.get_container_client(UPLOAD_CONTAINER_NAME)
         output_container_client = blob_service_client.get_container_client(OUTPUT_CONTAINER_NAME)
@@ -257,26 +290,30 @@ def analyze_document():
                 print(f"\n--- Starting concurrent processing of {num_pages_to_process} PDF pages ---")
                 for i in range(num_pages_to_process):
                     page = pdf.pages[i]
-                    page_num_display = i + 1
                     text = page.extract_text() if page.extract_text() else ""
 
                     if text.strip():
+                        # NEW: Sanitize text before sending to LLM for robustness against JSON errors
+                        sanitized_text = sanitize_text_for_json(text)
+                        
                         futures.append(executor.submit(
                             analyze_text_chunk_with_gemini,
-                            text,
-                            str(page_num_display), # Pass as string
+                            sanitized_text, # CHANGED: Pass sanitized text
+                            str(i + 1), # page_num_display
                             original_filename
                         ))
-                        print(f"  [Submitted] Page {page_num_display} for LLM analysis.")
+                        print(f"  [Submitted] Page {i + 1} for LLM analysis.")
                     else:
-                        print(f"  [Skipped] Page {page_num_display} (no text extracted).")
+                        print(f"  [Skipped] Page {i + 1} (no text extracted).")
                         all_extracted_data.append({
                             "Product_Name": "N/A",
                             "Allegation_Category": "N/A",
-                            "Specific_Allegation_Summary": f"No text extracted from PDF page {page_num_display}.",
+                            "Specific_Allegation_Summary": f"No text extracted from PDF page {i + 1}.",
                             "Involved_Defendants_CoConspirators": "N/A",
-                            "Pin_Cite_Page": str(page_num_display), # Ensure consistent with LLM output for pages
-                            "Pin_Cite_Paragraph": "N/A"
+                            "Other_Named_Entities": "N/A", # ADDED: For Item 4 (for skipped/error rows)
+                            "Pin_Cite_Page": str(i + 1), # Ensure consistent with LLM output for pages
+                            "Pin_Cite_Paragraph": "N/A",
+                            "Complaint_Name": complaint_name # ADDED: For Item 3 (for skipped/error rows)
                         })
 
         elif original_filename.lower().endswith('.docx'):
@@ -295,9 +332,12 @@ def analyze_document():
                 chunk_id_display = f"DOCX_Chunk_{chunk_num_display}" # Define chunk_id_display here
 
                 if text_chunk.strip():
+                    # NEW: Sanitize text before sending to LLM for robustness against JSON errors
+                    sanitized_text_chunk = sanitize_text_for_json(text_chunk)
+
                     futures.append(executor.submit(
                         analyze_text_chunk_with_gemini,
-                        text_chunk,
+                        sanitized_text_chunk, # CHANGED: Pass sanitized text chunk
                         chunk_id_display,
                         original_filename
                     ))
@@ -309,8 +349,10 @@ def analyze_document():
                         "Allegation_Category": "N/A",
                         "Specific_Allegation_Summary": f"No text extracted from DOCX chunk {chunk_id_display}.",
                         "Involved_Defendants_CoConspirators": "N/A",
+                        "Other_Named_Entities": "N/A", # ADDED: For Item 4 (for skipped/error rows)
                         "Pin_Cite_Page": chunk_id_display,
-                        "Pin_Cite_Paragraph": "N/A"
+                        "Pin_Cite_Paragraph": "N/A",
+                        "Complaint_Name": complaint_name # ADDED: For Item 3 (for skipped/error rows)
                     })
                 chunk_num_display += 1
 
@@ -337,8 +379,10 @@ def analyze_document():
                             "Allegation_Category": item.get("Error", "Unknown LLM Error"),
                             "Specific_Allegation_Summary": item.get("Content_Snippet", "")[:500] + f" ... (Full Error: {item.get('Error', 'N/A')})",
                             "Involved_Defendants_CoConspirators": "N/A",
-                            "Pin_Cite_Page": error_page_id, # Just the ID, frontend will format
-                            "Pin_Cite_Paragraph": "Error processing"
+                            "Other_Named_Entities": "N/A", # ADDED: For Item 4
+                            "Pin_Cite_Page": error_page_id,
+                            "Pin_Cite_Paragraph": "Error processing",
+                            "Complaint_Name": complaint_name # ADDED: For Item 3
                         })
                     else:
                         all_extracted_data.append({
@@ -347,8 +391,10 @@ def analyze_document():
                             "Specific_Allegation_Summary": item.get("Specific_Allegation_Summary", "N/A"),
                             "Involved_Defendants_CoConspirators": item.get(
                                 "Involved_Defendants_CoConspirators", "N/A"),
+                            "Other_Named_Entities": item.get("Other_Named_Entities", "N/A"), # ADDED: For Item 4
                             "Pin_Cite_Page": item.get("Pin_Cite_Page", "N/A"),
-                            "Pin_Cite_Paragraph": item.get("Pin_Cite_Paragraph", "N/A")
+                            "Pin_Cite_Paragraph": item.get("Pin_Cite_Paragraph", "N/A"),
+                            "Complaint_Name": complaint_name # ADDED: For Item 3
                         })
                 print(
                     f"  [Collected] Task {i + 1}/{total_submitted_tasks} complete. Total allegations so far: {len(all_extracted_data)} entries.")
@@ -360,8 +406,10 @@ def analyze_document():
                     "Allegation_Category": "Future Result Collection Error",
                     "Specific_Allegation_Summary": str(e)[:500],
                     "Involved_Defendants_CoConspirators": "N/A",
+                    "Other_Named_Entities": "N/A", # ADDED: For Item 4
                     "Pin_Cite_Page": "N/A",
-                    "Pin_Cite_Paragraph": "N/A"
+                    "Pin_Cite_Paragraph": "N/A",
+                    "Complaint_Name": complaint_name # ADDED: For Item 3
                 })
         print(f"--- Finished collecting all {total_submitted_tasks} submitted results. ---")
 
@@ -390,49 +438,58 @@ def analyze_document():
                                      na_position='last')
             df_processed.drop('sortable_pin_cite_page', axis=1, inplace=True, errors='ignore')
 
-            df_processed['Product Name Display'] = df_processed['Product_Name']
-            for i in range(1, len(df_processed)):
-                current_product = df_processed.iloc[i]['Product_Name']
-                prev_product = df_processed.iloc[i - 1]['Product_Name']
-                if current_product == prev_product and \
-                        current_product not in ["General Allegation", "ERROR", "N/A",
-                                                 "General Anticompetitive Conduct"]:
-                    df_processed.iloc[i, df_processed.columns.get_loc('Product Name Display')] = ""
+            # REMOVED: Logic to blank out Product Name Display. For Item 1.
+            # df_processed['Product Name Display'] = df_processed['Product_Name']
+            # for i in range(1, len(df_processed)):
+            #     current_product = df_processed.iloc[i]['Product_Name']
+            #     prev_product = df_processed.iloc[i - 1]['Product_Name']
+            #     if current_product == prev_product and \
+            #             current_product not in ["General Allegation", "ERROR", "N/A",
+            #                                      "General Anticompetitive Conduct"]:
+            #         df_processed.iloc[i, df_processed.columns.get_loc('Product Name Display')] = ""
 
             final_columns_ordered = [
-                "Product Name Display",
+                "Product_Name", # CHANGED: Uses original Product_Name for Item 1
                 "Allegation_Category",
                 "Specific_Allegation_Summary",
+                "Complaint_Name", # ADDED: For Item 3
                 "Involved_Defendants_CoConspirators",
+                "Other_Named_Entities", # ADDED: For Item 4
                 "Pin_Cite_Page",
                 "Pin_Cite_Paragraph"
             ]
 
             cols_to_use = [col for col in final_columns_ordered if col in df_processed.columns]
             df_excel = df_processed[cols_to_use].rename(columns={
-                "Product Name Display": "Product Name",
+                "Product_Name": "Product Name", # CHANGED: For Item 1 (renames original Product_Name)
                 "Allegation_Category": "Allegation Category",
-                "Specific_Allegation_Summary": "Specific Allegation Summary",
+                "Specific_Allegation_Summary": "Specific Allegation", # RENAMED: For Item 2
+                "Complaint_Name": "Complaint Name", # RENAMED: For Item 3
                 "Involved_Defendants_CoConspirators": "Involved Defendants/Co-Conspirators (as per the allegation)",
+                "Other_Named_Entities": "Other Named Entities (Not Defendants/Co-conspirators)", # RENAMED: For Item 4
                 "Pin_Cite_Page": "Pin Cite (Page/Chunk)",
                 "Pin_Cite_Paragraph": "Pin Cite (Paragraph #)"
             })
         elif df.empty:
             df_excel = pd.DataFrame(columns=[
-                "Product Name", "Allegation Category", "Specific Allegation Summary",
+                "Product Name", "Allegation Category", "Specific Allegation", # Updated for Item 2
+                "Complaint Name", # Added for Item 3
                 "Involved Defendants/Co-Conspirators (as per the allegation)",
+                "Other Named Entities (Not Defendants/Co-conspirators)", # Added for Item 4
                 "Pin Cite (Page/Chunk)", "Pin Cite (Paragraph #)"
             ])
         else: # Fallback if Product_Name column isn't found but df isn't empty
+            # This fallback might need manual adjustment if df doesn't have Product_Name but somehow has other data
+            # For simplicity, I'm assuming 'Product_Name' will always be there if df is not empty based on LLM output structure.
             df_excel = df.rename(columns={
-                "Product_Name": "Product Name",
+                "Product_Name": "Product Name", # Updated for Item 1
                 "Allegation_Category": "Allegation Category",
-                "Specific_Allegation_Summary": "Specific Allegation Summary",
+                "Specific_Allegation_Summary": "Specific Allegation", # Updated for Item 2
                 "Involved_Defendants_CoConspirators": "Involved Defendants/Co-Conspirators (as per the allegation)",
                 "Pin_Cite_Page": "Pin Cite (Page/Chunk)",
                 "Pin_Cite_Paragraph": "Pin Cite (Paragraph #)"
+                # Complaint_Name and Other_Named_Entities would not be present here if Product_Name was missing
             })
-
 
         # Save Excel to an in-memory stream and upload to Azure Blob Storage
         file_name_without_extension = os.path.splitext(original_filename)[0]
@@ -452,8 +509,12 @@ def analyze_document():
         if not results_for_json:
             results_for_json = [{"Product_Name": "No Data", "Allegation_Category": "N/A",
                                 "Specific_Allegation_Summary": "No specific allegations identified by the LLM or no processable text found.",
-                                "Involved_Defendants_CoConspirators": "N/A", "Pin_Cite_Page": "N/A",
-                                "Pin_Cite_Paragraph": "N/A"}]
+                                "Involved_Defendants_CoConspirators": "N/A",
+                                "Other_Named_Entities": "N/A", # ADDED: For Item 4
+                                "Pin_Cite_Page": "N/A",
+                                "Pin_Cite_Paragraph": "N/A",
+                                "Complaint_Name": "N/A" # ADDED: For Item 3
+                                }]
 
         return jsonify({"status": "success", "results": results_for_json, "excel_filename": excel_blob_name}), 200
 
@@ -469,7 +530,6 @@ def analyze_document():
         # We don't remove uploaded files immediately from blob storage
         # as they could be useful for debugging or future reference.
         # Implement a separate blob lifecycle management policy if needed.
-
 
 @app.route('/download_report/<filename>')
 def download_report(filename):
@@ -509,7 +569,6 @@ def download_report(filename):
         traceback.print_exc()
         return "Error serving file.", 500
 
-
 if __name__ == '__main__':
     if not gemini_model_global:
         print(
@@ -517,12 +576,8 @@ if __name__ == '__main__':
     if not blob_service_client:
         print("\n--- WARNING: Azure Blob Storage client not initialized. Check AZURE_STORAGE_CONNECTION_STRING in .env. ---")
     try:
-        # For production deployment on Azure Linux App Service, Gunicorn is typically used
-        # For local development or Windows App Service, waitress is fine.
         print("\n--- Starting Flask application using Waitress (for local/Windows dev). For Azure Linux, Gunicorn will be used. ---")
         serve(app, host='0.0.0.0', port=5000, threads=10)
-        # For development with Flask's built-in server (less suitable for production)
-        # app.run(debug=True, use_reloader=False, host='0.0.0.0', port=5000)
     except Exception as e:
         print(f"Error starting the Flask application: {e}")
         traceback.print_exc()
